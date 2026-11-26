@@ -16,6 +16,112 @@ test("manual list refresh invalidates the cached live count", async () => {
 });
 const nextCursor = { concurrentUserCount: 10, liveId: 42 };
 
+test("live tag catalogue shares pages and finds event and gray tags down to zero-viewer broadcasts", async () => {
+    const requests = [];
+    const f = fixture(async (url) => {
+        requests.push(url);
+        if (new URL(url).searchParams.has("liveId"))
+            return page([
+                {
+                    ...live("later"),
+                    liveId: 18,
+                    concurrentUserCount: 0,
+                    tags: ["STELLA", "숨은태그"],
+                    watchPartyNo: 569,
+                    watchPartyType: "RS",
+                    watchPartyTag: "2026치지직컵",
+                    watchPartyPaidProductId: 71,
+                },
+            ]);
+        return page(
+            [
+                {
+                    ...live("first"),
+                    liveId: 20,
+                    concurrentUserCount: 8,
+                    tags: ["stella"],
+                    categoryType: "GAME",
+                    liveCategory: "Game",
+                    dropsCampaignNo: 1,
+                },
+            ],
+            { concurrentUserCount: 8, liveId: 20 }
+        );
+    });
+    await f.repository.countGlobalLives();
+    assert.equal(requests.length, 1);
+    const getTags = async () => {
+        const seen = new Set();
+        const complete = await f.repository.loadLiveTagCatalog(new AbortController().signal, (tags) => {
+            for (const tag of tags) seen.add(tag);
+        });
+        assert.equal(complete, true);
+        return [...seen].sort();
+    };
+    const expected = ["드롭스", "stella", "프라임", "같이보기+", "2026치지직컵", "숨은태그"].sort();
+    assert.deepEqual(await getTags(), expected);
+    assert.deepEqual(await getTags(), expected);
+    assert.equal(requests.length, 2, "the count shared the first page and a second search reused the complete index");
+    f.advance(300001);
+    await getTags();
+    assert.equal(requests.length, 4, "the oldest source page controls the lifetime");
+});
+
+test("a closed tag search keeps the checked prefix, ignores late pages and resumes after a bad cursor", async () => {
+    const pending = deferred();
+    const cursor = { liveId: 21, concurrentUserCount: 0 };
+    let secondPageCalls = 0;
+    let pageSignal;
+    const f = fixture(async (url, { signal }) => {
+        if (!new URL(url).searchParams.has("liveId"))
+            return page([{ ...live("first"), liveId: 21, tags: ["첫태그"] }], cursor);
+        secondPageCalls++;
+        pageSignal = signal;
+        if (secondPageCalls === 1) return pending.promise;
+        if (secondPageCalls === 2) return page([{ ...live("second"), liveId: 20, tags: ["두번째"] }], cursor);
+        return page([{ ...live("last"), liveId: 19, tags: ["마지막"] }]);
+    });
+    const names = new Set();
+    const record = (tags) => {
+        for (const tag of tags) names.add(tag);
+    };
+    const cancel = new AbortController();
+    const loading = f.repository.loadLiveTagCatalog(cancel.signal, record);
+    await flush();
+    assert.deepEqual([...names], ["첫태그"]);
+    cancel.abort();
+    assert.equal(pageSignal.aborted, true);
+    pending.resolve(page([{ ...live("late"), liveId: 20, tags: ["늦은태그"] }]));
+    await assert.rejects(loading);
+    await assert.rejects(f.repository.loadLiveTagCatalog(new AbortController().signal, record), /cursor/);
+    assert.equal(await f.repository.loadLiveTagCatalog(new AbortController().signal, record), true);
+    assert.deepEqual([...names], ["첫태그", "마지막"]);
+    assert.equal(secondPageCalls, 3);
+});
+
+test("a tag search continues from the page limit and follows a zero cursor to the last tag", async () => {
+    const cursors = [];
+    const { repository } = fixture(async (url) => {
+        const cursor = new URL(url).searchParams.get("liveId");
+        cursors.push(cursor);
+        const liveId = cursor === null ? 200 : Number(cursor);
+        const row = { ...live(String(liveId)), liveId: liveId + 1, concurrentUserCount: 0, tags: [`태그${liveId}`] };
+        return page([row], liveId ? { concurrentUserCount: 0, liveId: liveId - 1 } : null);
+    });
+    const names = new Set();
+    const record = (tags) => {
+        for (const tag of tags) names.add(tag);
+    };
+    assert.equal(await repository.loadLiveTagCatalog(new AbortController().signal, record), false);
+    assert.equal(cursors.length, 200);
+    assert.equal(names.has("태그0"), false);
+    assert.equal(await repository.loadLiveTagCatalog(new AbortController().signal, record), true);
+    assert.equal(cursors.length, 201);
+    assert.equal(cursors.at(-1), "0");
+    assert.equal(names.size, 201);
+    assert.equal(names.has("태그0"), true);
+});
+
 test("grade lookups validate channel identity, share requests, expire and exclude unknowns", async () => {
     let calls = 0;
     let profile = {
@@ -667,6 +773,7 @@ test("live metadata preserves category identity and all existing consumer fields
         categoryId: "Case_ID",
         categoryName: "예전 이름",
         tags: ["태그"],
+        cardTags: [{ name: "태그", kind: "tag", href: "/lives?tags=%ED%83%9C%EA%B7%B8" }],
         liveId: 42,
         adult: true,
         order: 0,

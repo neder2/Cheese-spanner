@@ -108,6 +108,116 @@ const B_DETAIL = {
     publishDate: "2026-10-25 23:05:00",
 };
 
+for (const placement of ["right-controls", "left-controls", "time-inline"]) {
+    test(`VOD broadcast clock follows native control visibility immediately in ${placement}`, async () => {
+        const { dom, document, video } = await createFixture({ detail: B_DETAIL });
+        const player = document.querySelector("main");
+        const time = document.getElementById("time");
+        const clock = document.getElementById(CLOCK_ID);
+        player.className = "pzp-pc pzp-pc--controls";
+        time.classList.add("pzp-pc__vod-time");
+        // Current PZP time text uses ease; the surrounding buttons use ease-in.
+        const nativeStyle = document.createElement("style");
+        nativeStyle.textContent = `
+            .pzp-pc__vod-time { opacity:0; transition:opacity .2s ease; font-size:17px; }
+            .pzp-button { opacity:0; transition:opacity .2s ease-in; font-size:17px; }
+            .pzp-pc.pzp-pc--controls :is(.pzp-pc__vod-time, .pzp-button) { opacity:1; }
+        `;
+        document.head.append(nativeStyle);
+        let container = player;
+        if (placement !== "time-inline") {
+            container = document.createElement("div");
+            container.className = `pzp-pc__bottom-buttons-${placement === "right-controls" ? "right" : "left"}`;
+            container.style.fontSize = "17px";
+            container.getBoundingClientRect = rect(180, 36, placement === "right-controls" ? 440 : 16, 320);
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "pzp-button";
+            button.getBoundingClientRect = rect(36, 36, placement === "right-controls" ? 500 : 16, 320);
+            container.append(button);
+            player.append(container);
+            // Replace the old anchor as a native player remount does.
+            const replacement = time.cloneNode(true);
+            replacement.getBoundingClientRect = time.getBoundingClientRect;
+            time.replaceWith(replacement);
+            if (placement === "left-controls") container.append(replacement);
+        }
+        video.dispatchEvent(new dom.window.Event("timeupdate"));
+        await waitForCondition(() => clock.dataset.bcbcPlacement === placement && clock.style.fontSize === "17px");
+        assert.equal(clock.parentElement, container);
+        const nativeTime = document.getElementById("time");
+        const style = () => dom.window.getComputedStyle(clock);
+        assert.equal(style().opacity, "1");
+        player.classList.remove("pzp-pc--controls");
+        assert.equal(style().opacity, "0", "clock hides in the same style update without a media event or timer");
+        assert.equal(style().transition, dom.window.getComputedStyle(nativeTime).transition);
+        player.classList.add("pzp-pc--controls");
+        assert.equal(style().opacity, "1", "clock reappears immediately even while playback is paused");
+    });
+}
+
+test("VOD clock clears overflowing time controls and returns inline when the paused player widens", async () => {
+    const { chrome, dom, document } = await createFixture({ detail: B_DETAIL });
+    const clock = document.getElementById(CLOCK_ID);
+    const originalTime = document.getElementById("time");
+    const time = originalTime.cloneNode(true);
+    const row = document.createElement("div");
+    row.className = "pzp-pc__bottom-buttons";
+    const left = document.createElement("div");
+    left.className = "pzp-pc__bottom-buttons-left";
+    left.getBoundingClientRect = rect(150, 36, 16, 320);
+    time.getBoundingClientRect = rect(100, 20, 110, 328);
+    const skip = document.createElement("button");
+    skip.id = "cheese-spanner-skip-pill";
+    skip.getBoundingClientRect = rect(36, 24, 218, 326);
+    left.append(time, skip);
+    const right = document.createElement("div");
+    right.className = "pzp-pc__bottom-buttons-right";
+    right.getBoundingClientRect = rect(170, 36, 176, 320);
+    const settings = document.createElement("button");
+    settings.getBoundingClientRect = rect(36, 36, 350, 320);
+    right.append(settings);
+    row.append(left, right);
+    clock.getBoundingClientRect = rect(100, 24, 176, 326);
+    Object.defineProperty(clock, "offsetParent", { get: () => row });
+
+    let resize;
+    const observations = [];
+    let disconnects = 0;
+    dom.window.ResizeObserver = class {
+        constructor(callback) {
+            resize = callback;
+        }
+        observe(element) {
+            observations.push(element);
+        }
+        disconnect() {
+            disconnects += 1;
+        }
+    };
+    originalTime.replaceWith(row);
+    await waitForCondition(() => clock.hasAttribute("data-bcbc-above-controls"));
+    assert.equal(clock.parentElement, right);
+    assert.deepEqual(observations, [row]);
+
+    settings.getBoundingClientRect = rect(36, 36, 440, 320);
+    resize();
+    await waitForCondition(() => !clock.hasAttribute("data-bcbc-above-controls"));
+    settings.getBoundingClientRect = rect(36, 36, 350, 320);
+    resize();
+    await waitForCondition(() => clock.hasAttribute("data-bcbc-above-controls"));
+    assert.deepEqual(observations, [row], "resizing does not register the same row again");
+
+    skip.remove();
+    await waitForCondition(() => !clock.hasAttribute("data-bcbc-above-controls"));
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ vodBroadcastClockEnabled: { oldValue: true, newValue: false } }, "sync");
+    }
+    await waitForCondition(() => !clock.isConnected);
+    assert.equal(disconnects, 1);
+});
+
 function previousBroadcastRecord(overrides = {}) {
     return {
         id: "live:a",

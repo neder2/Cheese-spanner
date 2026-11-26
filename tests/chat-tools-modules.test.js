@@ -561,7 +561,7 @@ const MEASURED_CHEATKEY_BADGE =
     '<span class="_wrapper_1mc5x_30"><span class="_icon_1mc5x_15" style="width: 18px; height: 18px;"><span class="_container_1nwpy_2"><img src="https://ssl.pstatic.net/static/nng/glive/badge/cheatkey_24m.png" alt="" width="18" height="18"></span></span></span>';
 // 역할 신호가 img alt라는 기존 실측(2026-07) 구조를 같은 배지 자리에 넣어요.
 const ROLE_BADGE =
-    '<span class="_wrapper_1mc5x_30"><span class="_icon_1mc5x_15" style="width: 18px; height: 18px;"><span class="_container_1nwpy_2"><img src="https://example.test/manager.png" alt="채팅 운영자" width="18" height="18"></span></span></span>';
+    '<span class="_wrapper_1mc5x_30"><span class="_icon_1mc5x_15" style="width: 18px; height: 18px;"><span class="_container_1nwpy_2"><img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자" width="18" height="18"></span></span></span>';
 
 function measuredEmoticon(file) {
     return `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24" src="https://ssl.pstatic.net/static/nng/glive/icon/${file}.png"></button>`;
@@ -739,6 +739,50 @@ test("native identity keeps late role badges on one message and preserves real r
     h.nextPass();
     assert.equal(h.snapshot().length, 2, "a new native key preserves an actual repeated message");
 });
+
+for (const index of ["", "7"]) {
+    for (const repeatedText of [false, true]) {
+        test(`four native messages survive repeated row reuse (index=${index || "none"}, repeated=${repeatedText})`, (t) => {
+            const h = createModules(
+                t,
+                measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "공지", index })
+            );
+            enableNativeMessageBridge(h);
+            const row = h.root.firstElementChild;
+            const source = attachNativeMessage(row);
+            const expected = [];
+            const records = [];
+            for (let number = 1; number <= 4; number++) {
+                source.key = `native-${number}`;
+                const text = repeatedText ? "반복 공지" : `공지 ${number}`;
+                row.querySelector("._text_w9pvh_1").textContent = text;
+                expected.push(text);
+                h.collect(row);
+                h.nextPass();
+                h.nextPass();
+                assert.deepEqual(
+                    Array.from(h.snapshot(), (message) => message.text),
+                    expected
+                );
+                records.push(h.snapshot()[number - 1]);
+                assert.deepEqual(
+                    Array.from(h.snapshot(), (message) => message.recordId),
+                    records.map((message) => message.recordId),
+                    "earlier records retain their identities"
+                );
+                if (number === 2) h.store.markRead([records[1].id]);
+            }
+            assert.equal(new Set(records.map((message) => message.recordId)).size, 4);
+            assert.equal(h.snapshot()[1].unread, false, "a later message does not reset an earlier read state");
+            let scrolls = 0;
+            row.scrollIntoView = () => scrolls++;
+            h.store.navigate(records[1].id, records[1].recordId);
+            assert.equal(scrolls, 0, "an old message cannot navigate to a reused row");
+            h.store.navigate(records[3].id, records[3].recordId);
+            assert.equal(scrolls, 1);
+        });
+    }
+}
 
 test("a late body update retracts only the mixed candidate for the same native message", (t) => {
     const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "이전 공지" });
@@ -1556,3 +1600,18 @@ test("a list cleared row by row still re-binds every record redrawn in the same 
         });
     }
 }
+
+test("blind notice grammar recognizes Korean and English service labels and leaves normal sentences readable", (t) => {
+    const { namespace } = createModules(t);
+    for (const text of [
+        "[블라인드 처리된 메시지]",
+        "메시지가 삭제되었습니다.",
+        "hidden message",
+        "클린봇이 부적절한 표현을 감지했습니다.",
+    ]) {
+        assert.equal(namespace.parser.isBlindNoticeText(text), true, text);
+    }
+    for (const text of ["메시지가 삭제된 이유를 알려 주세요", "hidden message in the song", "처리된 주문"]) {
+        assert.equal(namespace.parser.isBlindNoticeText(text), false, text);
+    }
+});

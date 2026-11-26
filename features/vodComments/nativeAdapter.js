@@ -17,7 +17,7 @@
     const NATIVE_BUFF_ICON_CLASS_RE = /^_buff_icon_[A-Za-z0-9_-]+$/;
     const NATIVE_BUFF_COUNT_CLASS_RE = /^_buff_count_[A-Za-z0-9_-]+$/;
 
-    function createNativeAdapter({ onMeasurements = () => {} } = {}) {
+    function createNativeAdapter({ apiAvatarUrls = new WeakMap(), onMeasurements = () => {} } = {}) {
         let commentPanel = null;
         let nativeCommentObserver = null;
         let observedNativeCommentArea = null;
@@ -192,18 +192,11 @@
                 : "";
         }
 
-        function getNativeAvatarBackground(avatarControl) {
-            if (!(avatarControl instanceof HTMLElement)) return null;
+        function getNativeAvatarBackgroundUrl(avatarControl) {
+            if (!(avatarControl instanceof HTMLElement)) return "";
             const visual = avatarControl.querySelector(":scope > span, :scope > picture, :scope > i") || avatarControl;
-            const style = getComputedStyle(visual);
-            if (!style.backgroundImage || style.backgroundImage === "none") return null;
-            if (/\/default_profile_(?:light|dark)\.png/i.test(style.backgroundImage)) return null;
-            return {
-                backgroundImage: style.backgroundImage,
-                backgroundPosition: style.backgroundPosition,
-                backgroundRepeat: style.backgroundRepeat,
-                backgroundSize: style.backgroundSize,
-            };
+            const match = /^url\((?:"([^"]+)"|'([^']+)'|([^()\s]+))\)$/.exec(getComputedStyle(visual).backgroundImage);
+            return match ? model.normalizeImageUrl(match[1] || match[2] || match[3], location.href) : "";
         }
 
         function showMirroredAvatarImage(avatar, url) {
@@ -218,14 +211,13 @@
                 image.draggable = false;
                 avatar.prepend(image);
             }
+            image.referrerPolicy = "no-referrer";
             if (image.src !== url) image.src = url;
-            avatar.querySelector(".bcvc-avatar-native-visual")?.remove();
             avatar.classList.remove("bcvc-avatar-fallback");
         }
 
         function restoreMirroredAvatarFallback(avatar) {
-            avatar.querySelector(".bcvc-avatar-native-visual")?.remove();
-            const apiUrl = model.normalizeImageUrl(avatar.getAttribute("data-bcvc-api-avatar-url"), location.href);
+            const apiUrl = apiAvatarUrls.get(avatar);
             if (apiUrl && !isNativeDefaultProfileUrl(apiUrl)) {
                 showMirroredAvatarImage(avatar, apiUrl);
                 return;
@@ -242,21 +234,9 @@
                 return;
             }
 
-            const background = getNativeAvatarBackground(avatarControl);
-            if (!background) {
-                restoreMirroredAvatarFallback(avatar);
-                return;
-            }
-            avatar.querySelector(".bcvc-avatar-image")?.remove();
-            let visual = avatar.querySelector(".bcvc-avatar-native-visual");
-            if (!(visual instanceof HTMLElement)) {
-                visual = document.createElement("span");
-                visual.className = "bcvc-avatar-native-visual";
-                visual.setAttribute("aria-hidden", "true");
-                avatar.prepend(visual);
-            }
-            for (const [property, value] of Object.entries(background)) visual.style[property] = value;
-            avatar.classList.remove("bcvc-avatar-fallback");
+            const background = getNativeAvatarBackgroundUrl(avatarControl);
+            if (background && !isNativeDefaultProfileUrl(background)) showMirroredAvatarImage(avatar, background);
+            else restoreMirroredAvatarFallback(avatar);
         }
 
         function findNativeBuffIcon() {
@@ -620,6 +600,30 @@
             }
         }
 
+        function forwardPhoto(trigger, photos, index) {
+            // The site's viewer is portalled to body, outside the fullscreen player.
+            if (document.fullscreenElement || !commentPanel?.contains(trigger)) return false;
+            const row = trigger.closest("[data-bcvc-comment-id]");
+            const nativeRow = getNativeCommentElementById(row?.getAttribute("data-bcvc-comment-id"));
+            if (!nativeRow?.closest("#commentArea")) return false;
+            const buttons = Array.from(
+                nativeRow.querySelectorAll("[class*='_attachment_'] button[class*='_image_button_']")
+            ).filter((button) => isOwnedByNativeCommentRow(button, nativeRow));
+            if (buttons.length !== photos.length || !isNativeControlAvailable(buttons[index])) return false;
+            // A thumbnail index alone can point into a replaced gallery or a nested reply.
+            const matches = buttons.every((button, photoIndex) => {
+                const image = button.querySelector("img");
+                const tile = button.querySelector("[style*='background-image']");
+                const background = tile?.style.backgroundImage.match(/^url\("([^"]+)"\)$/)?.[1];
+                const src = image?.currentSrc || image?.src || background;
+                return src === model.getPhotoThumbnailUrl(photos[photoIndex]);
+            });
+            if (!matches) return false;
+            trigger.focus({ preventScroll: true });
+            buttons[index].click();
+            return true;
+        }
+
         function detach() {
             disconnectNativeCommentObserver();
             cancelScheduledSync();
@@ -627,7 +631,16 @@
             commentPanel = null;
         }
 
-        return Object.freeze({ attach, detach, forwardAction, forwardTimecode, refresh, syncAll, syncCommentIds });
+        return Object.freeze({
+            attach,
+            detach,
+            forwardAction,
+            forwardPhoto,
+            forwardTimecode,
+            refresh,
+            syncAll,
+            syncCommentIds,
+        });
     }
 
     namespace.nativeAdapter = Object.freeze({ createNativeAdapter });

@@ -18,7 +18,7 @@
 .history-page .hero {
     grid-template-columns: 32px minmax(0, 1fr) auto;
     gap: 12px;
-    border-radius: 12px;
+    border-radius: var(--page-card-radius);
 }
 
 .history-page .brand-mark {
@@ -65,7 +65,7 @@
 
 .history-page .settings-card {
     padding: 16px;
-    border-radius: 12px;
+    border-radius: var(--page-card-radius);
 }
 
 .history-layout {
@@ -831,7 +831,7 @@
 }
 
 .history-page .history-entry-details .history-entry-delete:hover {
-    border-color: rgba(255, 107, 107, 0.38);
+    border-color: color-mix(in srgb, var(--danger) 38%, transparent);
     background: var(--danger-bg);
 }
 
@@ -971,20 +971,6 @@
     font-size: 13px;
 }
 
-.history-page .history-activity-heading .secondary-button {
-    width: auto;
-    min-height: 36px;
-    padding: 0 14px;
-    border-color: var(--border-strong);
-    border-radius: 999px;
-    background: transparent;
-    font-size: 13px;
-}
-
-.history-page .history-activity-heading .secondary-button:hover:not(:disabled) {
-    background: var(--surface-2);
-}
-
 .history-donation-import {
     display: grid;
     gap: 8px;
@@ -1116,7 +1102,7 @@
     gap: 10px;
     padding: 16px;
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--page-card-radius);
     background: var(--surface);
     color: var(--text);
     font-size: 13px;
@@ -1150,19 +1136,9 @@
     margin-top: 2px;
 }
 
-/* Management actions are outlined pills; destructive ones use the danger outline. */
 .history-page .history-management .secondary-button {
-    width: auto;
     min-height: 34px;
     padding: 4px 14px;
-    border-color: var(--border-strong);
-    border-radius: 999px;
-    background: transparent;
-    font-size: 13px;
-}
-
-.history-page .history-management .secondary-button:hover:not(:disabled) {
-    background: var(--surface-2);
 }
 
 .history-page .history-management .secondary-button.danger-button {
@@ -1227,7 +1203,7 @@
 }
 
 .history-backup :focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus-ring);
     outline-offset: 3px;
 }
 
@@ -1236,7 +1212,7 @@
     gap: 4px;
     padding: 16px;
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--page-card-radius);
     background: var(--surface);
 }
 
@@ -1280,7 +1256,7 @@
     margin: 0;
     padding: 0;
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--page-card-radius);
     background: var(--surface);
     color: var(--text-muted);
     font-size: 12px;

@@ -653,7 +653,7 @@ test("monthly broadcast calendar colors KST days after async metadata load", asy
     const fixture = await createMonthlyBroadcastFixture({
         deferList: true,
         details: {
-            detailStart: {
+            1002: {
                 duration: 30 * 60,
                 liveCloseDate: new Date(secondStartMs + 30 * 60 * 1000).toISOString(),
                 liveOpenDate: "2026-06-28T00:30:00+09:00",
@@ -665,13 +665,13 @@ test("monthly broadcast calendar colors KST days after async metadata load", asy
                 duration: 20 * 60,
                 liveCloseDate: new Date(firstStartMs + 20 * 60 * 1000).toISOString(),
                 liveOpenDate: "2026-06-28T23:30:00+09:00",
-                videoNo: "lateStart",
+                videoNo: "1001",
                 videoTitle: "Late start fixture",
                 videoType: "REPLAY",
             },
             {
                 duration: 30 * 60,
-                videoNo: "detailStart",
+                videoNo: "1002",
                 videoTitle: "Detail start fixture",
                 videoType: "REPLAY",
             },
@@ -700,7 +700,7 @@ test("monthly broadcast calendar colors KST days after async metadata load", asy
             fixture.document.querySelector(`#${MONTHLY_BROADCAST_WIDGET_ID} .bcmb-calendar-count`).textContent,
             "총 방송 50분"
         );
-        assert.ok(fixture.fetchCalls.some((href) => href.includes("/service/v2/videos/detailStart")));
+        assert.ok(fixture.fetchCalls.some((href) => href.includes("/service/v2/videos/1002")));
         assert.equal(getMonthlyCalendarDay(fixture.document, "2026-06-27")?.getAttribute("data-has-broadcast"), null);
         assert.equal(day.querySelectorAll(".bcmb-day-tip-item").length, 2);
         assert.match(tipText, /00:30/);
@@ -720,7 +720,7 @@ test("monthly broadcast aborts pending page fetches when disabled", async () => 
                 duration: 20 * 60,
                 liveCloseDate: "2026-06-28T09:20:00+09:00",
                 liveOpenDate: "2026-06-28T09:00:00+09:00",
-                videoNo: "abort-pending",
+                videoNo: "1003",
                 videoTitle: "Abort pending fixture",
                 videoType: "REPLAY",
             },
@@ -971,11 +971,12 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
         "features/vodComments/repository.js",
         "features/vodComments/nativeAdapter.js",
         "features/vodComments/view.js",
+        "features/vodComments/chapters.js",
     ];
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.8");
+    assert.equal(manifest.version, "1.4.9");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -996,17 +997,27 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     ]);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     const vodAdapter = "features/vodMultiview/nativePlayer.js";
+    const vodRewind = "features/vodMultiview/rewindSource.js";
+    const vodRewindPage = "features/vodMultiview/rewindSourcePage.js";
     const vodSync = "features/vodMultiview/syncPage.js";
     const vodMetadata = "features/vodMultiview/metadata.js";
     const vodRuntime = "features/vodMultiview/runtime.js";
     assert.ok(mainScript.js.includes(vodAdapter));
+    assert.equal(readRepoFile(vodRewind), readRepoFile(vodRewindPage));
+    for (const [scripts, provider, consumer] of [
+        [mainScript.js, vodRewindPage, vodAdapter],
+        [isolatedScript.js, vodRewind, vodMetadata],
+    ]) {
+        assert.equal(scripts.filter((file) => file === provider).length, 1);
+        assert.ok(scripts.indexOf(provider) < scripts.indexOf(consumer));
+    }
     assert.ok(mainScript.js.indexOf(vodSync) > mainScript.js.indexOf(vodAdapter));
     assert.ok(mainScript.js.indexOf("features/autoQualityPage.js") > mainScript.js.indexOf(vodAdapter));
     assert.ok(isolatedScript.js.indexOf(vodMetadata) > isolatedScript.js.indexOf("content.js"));
     assert.ok(isolatedScript.js.indexOf(vodRuntime) > isolatedScript.js.indexOf(vodMetadata));
     for (const [scripts, foreignFiles] of [
-        [mainScript.js, [vodMetadata, vodRuntime]],
-        [isolatedScript.js, [vodAdapter, vodSync]],
+        [mainScript.js, [vodRewind, vodMetadata, vodRuntime]],
+        [isolatedScript.js, [vodRewindPage, vodAdapter, vodSync]],
     ]) {
         assert.ok(foreignFiles.every((file) => !scripts.includes(file)));
     }
@@ -1052,7 +1063,10 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     assert.ok(isolatedScript.js.indexOf("shared/uiTheme.js") < isolatedScript.js.indexOf("shared/updateGuideView.js"));
     assert.equal(mainScript.js.includes("shared/uiTheme.js"), false);
     assert.ok(isolatedScript.js.includes("features/updateGuide.js"));
-    assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));
+    assert.equal(
+        manifest.content_scripts.some((script) => script.js.includes("vendor/hls.light.min.js")),
+        false
+    );
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
     assert.ok(isolatedScript.js.includes("shared/selectors.js"));
     assert.ok(isolatedScript.js.indexOf("shared/selectors.js") > isolatedScript.js.indexOf("shared/data.js"));
@@ -1068,8 +1082,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     );
     assert.ok(isolatedScript.js.indexOf("features/volumeWheel.js") > isolatedScript.js.indexOf("content.js"));
     assert.ok(
-        isolatedScript.js.indexOf("vendor/hls.light.min.js") <
-            isolatedScript.js.indexOf("features/followingPreviewTooltip.js")
+        isolatedScript.js.indexOf("content.js") < isolatedScript.js.indexOf("features/followingPreviewTooltip.js")
     );
     assert.ok(isolatedScript.js.includes("features/chatTools.js"));
     assert.equal(isolatedScript.js.filter((name) => name === "features/chatTools/keywordSettings.js").length, 1);
@@ -3216,7 +3229,7 @@ test("audio compressor button tooltip reports graph setup failures", async () =>
     await waitForCondition(() => document.getElementById("cheese-spanner-audio-compressor"));
 
     const button = document.getElementById("cheese-spanner-audio-compressor");
-    button.click();
+    dispatchTrusted(button, new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
 
     assert.equal(button.dataset.cheeseSpannerReady, "0");
     assert.equal(button.getAttribute("tooltip"), "오디오 컴프레서(사용할 수 없음)");
@@ -4075,7 +4088,9 @@ test("live watch history ignores a late live A response after moving to live B",
                             channelName: channelId === "channel-b" ? "채널 B" : "채널 A",
                             liveId: channelId === "channel-b" ? "live-b" : "live-a",
                             liveImageUrl:
-                                channelId === "channel-b" ? "https://example.com/b.jpg" : "https://example.com/a.jpg",
+                                channelId === "channel-b"
+                                    ? "https://nng-phinf.pstatic.net/b.jpg"
+                                    : "https://nng-phinf.pstatic.net/a.jpg",
                             liveTitle: channelId === "channel-b" ? "방송 B" : "방송 A",
                             ...overrides,
                         },
@@ -4123,7 +4138,7 @@ test("live watch history ignores a late live A response after moving to live B",
     assert.equal(entryB.channelId, "channel-b");
     assert.equal(entryB.liveId, "live-b");
     assert.equal(entryB.title, "방송 B");
-    assert.equal(entryB.thumbnailUrl, "https://example.com/b.jpg");
+    assert.equal(entryB.thumbnailUrl, "https://nng-phinf.pstatic.net/b.jpg");
     assert.deepEqual(
         entryB.titleHistory.map((row) => row.title),
         ["방송 B"]
@@ -6007,6 +6022,40 @@ for (const route of ["live", "video"]) {
     });
 }
 
+test("VOD skip control follows the adjacent native time fade through control updates", async (t) => {
+    const chrome = createFakeChrome({ sync: { skipLivePauseResumeEnabled: false } });
+    const { dom, document, play, controls } = createLiveTimeShiftGuardDom(chrome);
+    t.after(() => closeSkipControlPage(dom, chrome));
+    dom.reconfigure({ url: "https://chzzk.naver.com/video/12345" });
+    controls.className = "pzp-pc__bottom-buttons-left";
+    play.classList.add("pzp-button");
+    const time = document.createElement("div");
+    time.className = "pzp-vod-time pzp-pc__vod-time";
+    time.getBoundingClientRect = play.getBoundingClientRect;
+    controls.append(time);
+    const nativeStyle = document.createElement("style");
+    nativeStyle.textContent = `
+        .pzp-button { transition:opacity .2s ease-in; }
+        .pzp-pc__vod-time { transition:opacity .2s ease; }
+        .pzp-pc__playback-switch, .pzp-pc__vod-time { opacity:0; }
+        .pzp-pc.pzp-pc--controls :is(.pzp-pc__playback-switch, .pzp-pc__vod-time) { opacity:1; }
+    `;
+    document.head.append(nativeStyle);
+    await loadSkipControlPage(dom);
+    const pill = document.getElementById("cheese-spanner-skip-pill");
+    assert.ok(pill);
+    assert.equal(dom.window.getComputedStyle(pill).transition, dom.window.getComputedStyle(time).transition);
+    assert.equal(dom.window.getComputedStyle(pill).opacity, "0");
+    const player = document.getElementById("playerRoot");
+    player.classList.add("pzp-pc--controls");
+    assert.equal(dom.window.getComputedStyle(pill).opacity, "1");
+    time.style.transition = "opacity .4s linear";
+    play.setAttribute("aria-label", "일시 정지");
+    await waitForCondition(() => dom.window.getComputedStyle(pill).transition === time.style.transition);
+    player.classList.remove("pzp-pc--controls");
+    assert.equal(dom.window.getComputedStyle(pill).opacity, "0");
+});
+
 test("live fast-forward button seeks to the buffered live edge", async () => {
     const chrome = createFakeChrome({
         sync: {
@@ -7006,6 +7055,7 @@ function registerPlayerDisplayCleanup(t, dom) {
         }
     };
     t.after(() => {
+        dom.window.dispatchEvent(new dom.window.PageTransitionEvent("pagehide", { persisted: false }));
         for (const observer of observers) observer.disconnectAll ? observer.disconnectAll() : observer.disconnect();
         dom.window.close();
     });

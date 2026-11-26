@@ -67,8 +67,6 @@
     const HOST_RETRY_INITIAL_MS = 250;
     const HOST_RETRY_MAX_MS = 3000;
 
-    const WIDGET_FONT_FAMILY =
-        '"Sandoll Nemony2", "Sandoll Nemony", "Apple SD Gothic Neo", "Apple SD Gothic NEO", "Malgun Gothic", "맑은 고딕", sans-serif';
     const CALENDAR_FOOT_INNER_WIDTH_PX = 208;
     const CALENDAR_FOOT_GAP_PX = 8;
     const CALENDAR_FOOT_NOTE_MAX_FONT_PX = 10;
@@ -254,7 +252,7 @@
   color:var(--bct-text);
   box-shadow:none;
   box-sizing:border-box;
-  font-family:${WIDGET_FONT_FAMILY};
+  font-family:inherit;
   line-height:1;
   white-space:nowrap;
   pointer-events:auto;
@@ -325,6 +323,7 @@
   display:none;
 }
 #${WIDGET_ID} .bcmb-calendar{
+  font-family:"Sandoll Nemony2", "Sandoll Nemony", "Apple SD Gothic Neo", "Apple SD Gothic NEO", "Malgun Gothic", "맑은 고딕", sans-serif;
   display:none;
   position:absolute;
   top:calc(100% + 8px);
@@ -337,7 +336,7 @@
   color:var(--bct-text);
   box-shadow:var(--bct-shadow);
   box-sizing:border-box;
-  z-index:2147483647;
+  z-index:var(--bct-z-popover);
   cursor:default;
 }
 #${WIDGET_ID}:hover .bcmb-calendar,
@@ -459,7 +458,7 @@
   text-align:left;
   white-space:normal;
   transform:translateX(-50%);
-  z-index:2147483647;
+  z-index:var(--bct-z-toast);
   pointer-events:auto;
 }
 /* 셀과 툴팁 사이 6px 갭에서 hover가 끊기면 앵커를 클릭하러 갈 수 없다. */
@@ -1731,12 +1730,13 @@ ${CALENDAR_LEVELS.map(
     function fitCalendarFootNoteFont(noteEl, totalEl) {
         const context = getFootMeasureContext();
         if (!context) return;
-        context.font = `900 ${CALENDAR_FOOT_NOTE_MAX_FONT_PX}px ${WIDGET_FONT_FAMILY}`;
+        const family = getComputedStyle(noteEl).fontFamily || "sans-serif";
+        context.font = `900 ${CALENDAR_FOOT_NOTE_MAX_FONT_PX}px ${family}`;
         const availableWidth =
             CALENDAR_FOOT_INNER_WIDTH_PX - CALENDAR_FOOT_GAP_PX - context.measureText(totalEl.textContent).width - 1;
         let size = CALENDAR_FOOT_NOTE_MAX_FONT_PX;
         while (size > CALENDAR_FOOT_NOTE_MIN_FONT_PX) {
-            context.font = `800 ${size}px ${WIDGET_FONT_FAMILY}`;
+            context.font = `800 ${size}px ${family}`;
             if (context.measureText(noteEl.textContent).width <= availableWidth) break;
             size = Math.max(CALENDAR_FOOT_NOTE_MIN_FONT_PX, size - 0.5);
         }
@@ -1759,8 +1759,8 @@ ${CALENDAR_LEVELS.map(
         totalEl.className = "bcmb-calendar-watch-total";
         totalEl.textContent = `내 시청 시간 ${formatDuration(watchSeconds)}`;
 
-        fitCalendarFootNoteFont(noteEl, totalEl);
         footEl.replaceChildren(noteEl, totalEl);
+        fitCalendarFootNoteFont(noteEl, totalEl);
     }
 
     function getStartPrimaryVideoNo(start) {

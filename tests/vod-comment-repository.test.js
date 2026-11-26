@@ -62,6 +62,7 @@ function createRepositoryFixture(options = {}) {
         runScripts: "outside-only",
         url: "https://chzzk.naver.com/video/123",
     });
+    dom.window.eval(fs.readFileSync(path.join(ROOT, "shared/data.js"), "utf8"));
     dom.window.eval(MODEL_SOURCE);
     dom.window.eval(REPOSITORY_SOURCE);
     const { createCommentRepository } = dom.window.CheeseSpanner.vodComments.repository;

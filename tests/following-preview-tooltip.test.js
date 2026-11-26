@@ -1165,9 +1165,9 @@ function attachMainPlayerVideo(dom, volume) {
     return video;
 }
 
-function createSoundPreviewFetch(dom, { liveId }) {
+function createSoundPreviewFetch(dom, { liveId, media = [] }) {
     const playbackJson = JSON.stringify({
-        media: [{ mediaId: "HLS", path: "https://nvelop-livecloud.pstatic.net/chzzk/live/live-sound.m3u8" }],
+        media: [...media, { mediaId: "HLS", path: "https://nvelop-livecloud.pstatic.net/chzzk/live/live-sound.m3u8" }],
     });
 
     return async (url) => {
@@ -1220,6 +1220,91 @@ async function runSoundPreview(dom, link, document) {
 
     await waitForFollowingPlaybackDelay();
     return { tip, video };
+}
+
+test("a fatal low-latency preview retries the same response's regular HLS once and ignores old errors", async () => {
+    const { document, dom, link } = createFollowingPreviewDom();
+    try {
+        const state = installFakeHls(dom);
+        const media = [{ mediaId: "LLHLS", path: "https://nvelop-livecloud.pstatic.net/chzzk/live/low.m3u8" }];
+        dom.window.fetch = createSoundPreviewFetch(dom, { liveId: "live-retry", media });
+        evalFollowingPreviewTooltipScripts(dom);
+        const { video } = await runSoundPreview(dom, link, document);
+        const original = state.instances[0];
+        assert.equal(original.config.lowLatencyMode, true);
+        video.volume = 0.37;
+        video.muted = true;
+        original.handlers.hlsError("hlsError", { fatal: true });
+        await waitForAsyncCallbacks();
+        assert.equal(state.instances.length, 2);
+        const fallback = state.instances[1];
+        assert.equal(fallback.config.lowLatencyMode, false);
+        assert.match(fallback.source, /live-sound\.m3u8$/);
+        assert.equal(original.destroyed, true);
+        assert.equal(fallback.autoLevelCapping, 1);
+        assert.equal(video.volume, 0.37);
+        assert.equal(video.muted, true);
+        assert.equal(video.getAttribute("data-bcfp-player-state"), "ready");
+        original.handlers.hlsError("hlsError", { fatal: true });
+        assert.equal(video.getAttribute("data-bcfp-player-state"), "ready");
+        fallback.handlers.hlsError("hlsError", { fatal: true });
+        await waitForAsyncCallbacks();
+        assert.equal(video.getAttribute("data-bcfp-player-state"), "error");
+        assert.equal(state.instances.length, 2);
+    } finally {
+        dom.window.close();
+    }
+});
+
+for (const closeBeforeRetry of [false, true]) {
+    test(`native HLS retries the regular stream once while the preview is open (close before retry: ${closeBeforeRetry})`, async (t) => {
+        const { document, dom, link } = createFollowingPreviewDom();
+        t.after(() => dom.window.close());
+        const { window } = dom;
+        const state = installFakeHls(dom);
+        window.Hls.isSupported = () => false;
+        window.HTMLMediaElement.prototype.canPlayType = () => "probably";
+        const loads = [];
+        window.HTMLMediaElement.prototype.load = function () {
+            if (this.getAttribute("src")) loads.push(this.src);
+        };
+        const low = "https://nvelop-livecloud.pstatic.net/chzzk/live/low.m3u8";
+        const regular = "https://nvelop-livecloud.pstatic.net/chzzk/live/live-sound.m3u8";
+        window.fetch = createSoundPreviewFetch(dom, {
+            liveId: "native-retry",
+            media: [{ mediaId: "LLHLS", path: low }],
+        });
+        evalFollowingPreviewTooltipScripts(dom);
+        const { video } = await runSoundPreview(dom, link, document);
+        assert.deepEqual(loads, [low]);
+        let error = { code: 4 };
+        Object.defineProperty(video, "error", { get: () => error });
+        video.volume = 0.37;
+        video.muted = true;
+        video.dispatchEvent(new window.Event("error"));
+        video.dispatchEvent(new window.Event("error"));
+        if (closeBeforeRetry) window.dispatchEvent(new window.Event("pagehide"));
+        await waitForAsyncCallbacks();
+        if (closeBeforeRetry) {
+            assert.deepEqual(loads, [low]);
+            assert.equal(state.playCalls.length, 0);
+            return;
+        }
+        assert.deepEqual(loads, [low, regular]);
+        error = null;
+        video.dispatchEvent(new window.Event("error"));
+        video.dispatchEvent(new window.Event("loadedmetadata"));
+        assert.deepEqual(state.playCalls, [video]);
+        assert.equal(video.getAttribute("data-bcfp-player-state"), "ready");
+        assert.equal(video.volume, 0.37);
+        assert.equal(video.muted, true);
+        error = { code: 3 };
+        video.dispatchEvent(new window.Event("error"));
+        video.dispatchEvent(new window.Event("loadeddata"));
+        await waitForAsyncCallbacks();
+        assert.equal(video.getAttribute("data-bcfp-player-state"), "error");
+        assert.deepEqual(loads, [low, regular]);
+    });
 }
 
 test("following preview sound uses the fixed configured volume instead of the main player", async () => {

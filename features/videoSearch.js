@@ -42,6 +42,7 @@
     let currentChannelId = null;
     let currentQuery = "";
     let observer = null;
+    let themeObserver = null;
     let lastUrl = location.href;
 
     let currentGrid = null;
@@ -75,7 +76,7 @@
         setLoadingReason,
         startPageChangeDetection,
     } = CheeseSpanner.utils;
-    const { filterVideosByNormalizedQuery, hasCommentMatchNorm, getCommentMatchText, getWatchProgressRatio } =
+    const { filterVideosByNormalizedQuery, hasCommentMatchNorm, getCommentMatchTexts, getWatchProgressRatio } =
         CheeseSpanner.videoSearchModel;
     const repository = CheeseSpanner.videoSearchRepository.createRepository({
         fetchJson,
@@ -182,7 +183,7 @@
   background:transparent;
   border:0;
   color:var(--bcvs-text);
-  font-family:var(--bct-font);
+  font-family:var(--bcvs-font-family,inherit);
   font-size:var(--bcvs-font-size);
   font-weight:var(--bcvs-font-weight);
   line-height:var(--bcvs-line-height);
@@ -262,7 +263,6 @@
   background-color:var(--bct-surface-base);
   color:var(--bct-text-body);
   font:inherit;
-  font-family:var(--bct-font);
   cursor:pointer;
 }
 [${LOAD_MORE_ATTR}] button:hover{
@@ -350,9 +350,12 @@
   word-break:break-word;
   max-height:320px;
   overflow-y:auto;
-  z-index:2147483647;
+  z-index:var(--bct-z-toast);
   pointer-events:auto;
 }
+.bcvs-comment-tooltip ul{list-style:none;margin:0;padding:0}
+.bcvs-comment-tooltip li + li{margin-top:6px;border-top:1px solid var(--bct-border);padding-top:6px}
+.bcvs-comment-tooltip a{color:inherit;text-decoration:underline}
 .bcvs-comment-tooltip-line{
   display:block;
   min-height:17px;
@@ -819,7 +822,8 @@
             const tplVideo = entry.videos.find((v) => v.videoNo === videoNo);
             if (!tplVideo) continue;
 
-            const cloned = child.cloneNode(true);
+            // Template images remain inert until the result's validated sources and referrer policy are ready.
+            const cloned = document.createElement("template").content.ownerDocument.importNode(child, true);
 
             const titleEl =
                 findElementByExactText(cloned, tplVideo.title) || findElementByContainsText(cloned, tplVideo.title);
@@ -920,7 +924,9 @@
 
     function scheduleCommentTooltipClose() {
         clearCommentTooltipClose();
-        commentTooltipHideTimer = window.setTimeout(hideCommentTooltip, 650);
+        commentTooltipHideTimer = window.setTimeout(() => {
+            if (!commentTooltip?.contains(document.activeElement)) hideCommentTooltip();
+        }, 650);
     }
 
     function handleCommentTooltipScroll() {
@@ -959,10 +965,19 @@
 
     function getOpenCommentTooltipState() {
         if (!activeCommentTooltipIcon || commentTooltip?.getAttribute("data-show") !== "1") return null;
+        const focused = document.activeElement;
+        const item =
+            focused instanceof HTMLAnchorElement && commentTooltip.contains(focused) ? focused.closest("li") : null;
         return {
             videoNo: activeCommentTooltipIcon.getAttribute(COMMENT_VIDEO_ATTR) || "",
-            text: activeCommentTooltipIcon.__bcvsCommentText || "",
             query: activeCommentTooltipIcon.__bcvsCommentQuery || currentQuery,
+            scrollTop: commentTooltip.scrollTop,
+            iconFocused: focused === activeCommentTooltipIcon,
+            focusedLink: item && {
+                comment: item.textContent,
+                index: Array.from(item.querySelectorAll("a")).indexOf(focused),
+                href: focused.getAttribute("href"),
+            },
         };
     }
 
@@ -1048,6 +1063,16 @@
         const tooltip = document.createElement("div");
         tooltip.className = "bcvs-comment-tooltip";
         tooltip.setAttribute(COMMENT_TOOLTIP_ATTR, "1");
+        tooltip.setAttribute("role", "region");
+        tooltip.setAttribute("aria-label", "일치한 댓글");
+        tooltip.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            const icon = activeCommentTooltipIcon;
+            hideCommentTooltip();
+            icon?.focus();
+        });
         document.body.appendChild(tooltip);
         commentTooltip = tooltip;
         installCommentTooltipListeners();
@@ -1055,22 +1080,34 @@
         return tooltip;
     }
 
-    function renderCommentTooltipText(tooltip, text, query) {
+    function renderCommentTooltipText(tooltip, texts, query, icon) {
         tooltip.replaceChildren();
         const q = normalize(query);
-        const lines = String(text || "")
-            .replace(/\r\n?/g, "\n")
-            .split("\n");
-
-        for (const line of lines) {
-            const lineEl = document.createElement("span");
-            lineEl.className = "bcvs-comment-tooltip-line";
-            if (q && normalize(line).includes(q)) {
-                lineEl.setAttribute("data-hit", "1");
+        const list = document.createElement("ul");
+        for (const text of texts) {
+            const item = document.createElement("li");
+            for (const line of text.split("\n")) {
+                const lineEl = document.createElement("span");
+                lineEl.className = "bcvs-comment-tooltip-line";
+                if (q && normalize(line).includes(q)) lineEl.setAttribute("data-hit", "1");
+                let cursor = 0;
+                for (const { label, seconds, index } of CheeseSpanner.utils.commentTimecodes(
+                    line,
+                    icon.__bcvsDuration
+                )) {
+                    lineEl.append(line.slice(cursor, index));
+                    const link = document.createElement("a");
+                    link.textContent = label;
+                    link.href = `/video/${icon.__bcvsVideoNo}?currentTime=${seconds}`;
+                    lineEl.append(link);
+                    cursor = index + label.length;
+                }
+                lineEl.append(line.slice(cursor));
+                item.append(lineEl);
             }
-            lineEl.textContent = line;
-            tooltip.appendChild(lineEl);
+            list.append(item);
         }
+        tooltip.append(list);
     }
 
     function scrollCommentTooltipToHit(tooltip) {
@@ -1084,8 +1121,8 @@
         tooltip.scrollTop = Math.max(0, targetTop);
     }
 
-    function showCommentTooltip(anchor, text, query) {
-        if (!text) {
+    function showCommentTooltip(anchor, text, query, scrollTop = null) {
+        if (!text?.length) {
             hideCommentTooltip();
             return;
         }
@@ -1095,17 +1132,22 @@
             activeCommentTooltipIcon.setAttribute("aria-expanded", "false");
         }
         const tooltip = getCommentTooltip();
-        renderCommentTooltipText(tooltip, text, query);
+        renderCommentTooltipText(tooltip, text, query, anchor);
         activeCommentTooltipIcon = anchor;
         commentTooltipOpenedAt = performance.now();
         anchor.setAttribute("data-active", "1");
         anchor.setAttribute("aria-expanded", "true");
         positionCommentTooltip(anchor);
-        scrollCommentTooltipToHit(tooltip);
+        if (scrollTop === null) scrollCommentTooltipToHit(tooltip);
+        else tooltip.scrollTop = scrollTop;
     }
 
     function restoreCommentTooltipState(state) {
-        if (!state?.videoNo || !currentGrid?.isConnected) return;
+        if (!state) return;
+        if (!state.videoNo || !currentGrid?.isConnected || state.query !== currentQuery) {
+            hideCommentTooltip();
+            return;
+        }
         let icon = null;
         for (const el of currentGrid.querySelectorAll(`[${COMMENT_ICON_ATTR}="1"]`)) {
             if (el.getAttribute(COMMENT_VIDEO_ATTR) !== state.videoNo) continue;
@@ -1116,11 +1158,17 @@
             hideCommentTooltip();
             return;
         }
-        showCommentTooltip(
-            icon,
-            icon.__bcvsCommentText || state.text || "",
-            icon.__bcvsCommentQuery || state.query || currentQuery
-        );
+        showCommentTooltip(icon, icon.__bcvsReadCommentTexts(), state.query, state.scrollTop);
+        if (state.focusedLink) {
+            const { comment, index, href } = state.focusedLink;
+            const item = Array.from(commentTooltip.querySelectorAll("li")).find((row) => row.textContent === comment);
+            const link = item?.querySelectorAll("a")[index];
+            (activeCommentTooltipIcon === icon && link?.getAttribute("href") === href ? link : icon).focus({
+                preventScroll: true,
+            });
+        } else if (state.iconFocused) {
+            icon.focus({ preventScroll: true });
+        }
     }
 
     function toggleCommentTooltip(anchor, text, query) {
@@ -1203,8 +1251,7 @@
 
     function attachCommentMatch(card, video) {
         if (!isCommentSearchEnabled()) return;
-        const commentText = getCommentMatchText(video, currentQuery);
-        if (!commentText) return;
+        if (!hasCommentMatchNorm(video, normalize(currentQuery))) return;
 
         card.classList.add("bcvs-comment-card");
         const icon = document.createElement("span");
@@ -1221,8 +1268,9 @@
   <path d="M8.45 9.2h7.1M8.45 11.85h4.9" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"/>
 </svg>
 `;
-        const tooltipText = commentText;
-        icon.__bcvsCommentText = tooltipText;
+        icon.__bcvsVideoNo = video.videoNo;
+        icon.__bcvsDuration = video.duration;
+        icon.__bcvsReadCommentTexts = () => getCommentMatchTexts(video, currentQuery);
         icon.__bcvsCommentQuery = currentQuery;
         icon.addEventListener("pointerdown", (e) => {
             e.stopPropagation();
@@ -1230,13 +1278,22 @@
         icon.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
-            toggleCommentTooltip(icon, tooltipText, currentQuery);
+            toggleCommentTooltip(icon, icon.__bcvsReadCommentTexts(), currentQuery);
         });
         icon.addEventListener("keydown", (e) => {
             if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 e.stopPropagation();
-                toggleCommentTooltip(icon, tooltipText, currentQuery);
+                toggleCommentTooltip(icon, icon.__bcvsReadCommentTexts(), currentQuery);
+                if (activeCommentTooltipIcon === icon) commentTooltip.querySelector("a")?.focus();
+            } else if (
+                e.key === "Tab" &&
+                !e.shiftKey &&
+                activeCommentTooltipIcon === icon &&
+                commentTooltip.querySelector("a")
+            ) {
+                e.preventDefault();
+                commentTooltip.querySelector("a").focus();
             } else if (e.key === "Escape") {
                 hideCommentTooltip();
             }
@@ -1250,6 +1307,7 @@
     }
 
     function buildInjectedCard(video) {
+        if (!/^[1-9]\d{0,14}$/.test(String(video.videoNo))) return null;
         const tpl = captureTemplate();
         if (!tpl) return null;
         const card = tpl.node.cloneNode(true);
@@ -1258,7 +1316,10 @@
         for (const a of card.querySelectorAll("a")) {
             const href = a.getAttribute("href") || "";
             if (/\/video\/\d+/.test(href)) {
-                a.setAttribute("href", href.replace(/\/video\/\d+/, `/video/${video.videoNo}`));
+                a.setAttribute(
+                    "href",
+                    href.replace(/\/video\/\d+/, () => `/video/${video.videoNo}`)
+                );
             }
             if (a.hasAttribute("aria-label")) a.setAttribute("aria-label", video.title);
             if (a.hasAttribute("title")) a.setAttribute("title", video.title);
@@ -1267,6 +1328,7 @@
         // The clone carries the template video's thumbnail, duration and date; a missing value must clear them
         // instead of showing another video's data.
         for (const img of card.querySelectorAll("img")) {
+            img.referrerPolicy = "no-referrer";
             img.removeAttribute("srcset");
             if (video.thumb) {
                 img.setAttribute("src", video.thumb);
@@ -1473,7 +1535,10 @@
             child.setAttribute(HIDE_ATTR, "1");
         }
 
-        if (!matches.length) return;
+        if (!matches.length) {
+            hideCommentTooltip();
+            return;
+        }
 
         const fragment = document.createDocumentFragment();
         for (const video of renderedMatches) {
@@ -1484,12 +1549,9 @@
             fragment.appendChild(buildLoadMoreControl(remainingMatches));
         }
         currentGrid.insertBefore(fragment, currentGrid.firstChild);
-        const afterRender = () => {
-            alignCommentIconsToTagRows();
-            restoreCommentTooltipState(openCommentTooltipState);
-        };
-        requestAnimationFrame(afterRender);
-        window.setTimeout(afterRender, 120);
+        restoreCommentTooltipState(openCommentTooltipState);
+        requestAnimationFrame(alignCommentIconsToTagRows);
+        window.setTimeout(alignCommentIconsToTagRows, 120);
     }
 
     function buildBar() {
@@ -1523,6 +1585,7 @@
             const prevNorm = normalize(currentQuery);
             const nextNorm = normalize(val);
             if (prevNorm !== nextNorm) {
+                hideCommentTooltip();
                 visibleMatchLimit = getRenderBatchSize();
                 lastFilterKey = null;
             }
@@ -1626,9 +1689,9 @@
         const controls = getVisibleControls(host);
         if (!controls.length) return;
 
-        // 글꼴 계열은 확장 Pretendard(--bct-font)로 고정하고, 칩 줄과 맞물리는 크기·굵기·줄 높이만 따른다.
         const fontSource = controls[0];
         const fontStyle = getComputedStyle(fontSource);
+        bar.style.setProperty("--bcvs-font-family", fontStyle.fontFamily);
         bar.style.setProperty("--bcvs-font-size", fontStyle.fontSize);
         bar.style.setProperty("--bcvs-font-weight", fontStyle.fontWeight);
         bar.style.setProperty("--bcvs-line-height", fontStyle.lineHeight);
@@ -1803,6 +1866,11 @@
 
     function startObserver() {
         if (observer) return;
+        themeObserver = new MutationObserver(() => {
+            const bar = document.getElementById(BAR_ID);
+            if (bar?.parentElement && bar.dataset.mode === "inline") syncBarWithHostUi(bar, bar.parentElement);
+        });
+        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
         let urlChanged = false;
         observer = createMutationObserverSync({
             target: () => document.body || document.documentElement,
@@ -1838,6 +1906,8 @@
 
     function stopObserver() {
         if (!observer) return;
+        themeObserver?.disconnect();
+        themeObserver = null;
         observer.disconnectAll?.();
         observer.disconnect();
         observer = null;

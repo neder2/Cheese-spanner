@@ -418,17 +418,7 @@
             );
         }
         function panelCells(cells = model.layout(state).cells) {
-            return (
-                cells
-                    .filter((cell) => cell.id)
-                    // Compare allocated rows first; round away floating-point noise at shared edges.
-                    .sort(
-                        (a, b) =>
-                            Number(b.id === routeId) - Number(a.id === routeId) ||
-                            Math.round(a.rect[1] * 1e6) - Math.round(b.rect[1] * 1e6) ||
-                            a.rect[0] - b.rect[0]
-                    )
-            );
+            return model.orderedCells(cells, routeId);
         }
         function syncPanelOrder(cells) {
             const list = panelId && panel?.querySelector(".bcmv-streams");

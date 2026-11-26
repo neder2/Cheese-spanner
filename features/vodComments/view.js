@@ -22,13 +22,35 @@
     const SPLITTER_ID = "cheese-spanner-vod-comment-splitter";
     const SPLITTER_HEIGHT = 8;
     const NATIVE_ACTION_HINT_ID = "cheese-spanner-vod-comment-native-action-hint";
-    const { MAX_COMMENTS_PER_ORDER, MAX_REPLIES_PER_COMMENT, MAX_REPLIES_PER_ORDER, SORT_OPTIONS, TIMECODE_SCAN_RE } =
-        model;
+    // The native BEST lettering is a fixed vector in both themes.
+    const BEST_BADGE_LETTERING = `
+M5.61411 13 V4.87012 H9.39453 C11.0059 4.87012 11.9805 5.64761 11.9805 6.91527 V6.92653 C11.9805
+7.84488 11.2763 8.5773 10.3523 8.69561 V8.73505 C11.4622 8.79139 12.3355 9.59706 12.3355 10.6619
+V10.6732 C12.3355 12.0873 11.2369 13 9.49594 13 H5.61411 Z
+M8.84803 6.32933 H7.68179 V8.21109 H8.69591 C9.52411 8.21109 9.96357 7.85051 9.96357 7.24204
+V7.23077 C9.96357 6.66737 9.54665 6.32933 8.84803 6.32933 Z
+M8.84803 9.51255 H7.68179 V11.5408 H8.91001 C9.75511 11.5408 10.234 11.1858 10.234 10.5267
+V10.5154 C10.234 9.86749 9.75511 9.51255 8.84803 9.51255 Z
+M13.2088 13 V4.87012 H18.7808 V6.53215 H15.2764 V8.13785 H18.5723 V9.69283 H15.2764 V11.338
+H18.7808 V13 H13.2088 Z
+M23.0795 13.1465 C21.0569 13.1465 19.778 12.2507 19.6879 10.6957 L19.6822 10.5943 H21.6034
+L21.6147 10.6563 C21.7161 11.1802 22.3246 11.5239 23.119 11.5239 C23.9416 11.5239 24.4486 11.1746
+24.4486 10.6675 V10.6619 C24.4486 10.1999 24.088 9.9858 23.1359 9.79988 L22.3021 9.64213 C20.6907
+9.34353 19.84 8.54913 19.84 7.30401 V7.29838 C19.84 5.73212 21.1978 4.72363 23.0626 4.72363
+C25.1022 4.72363 26.2571 5.68142 26.3304 7.15753 L26.336 7.27584 H24.4148 L24.4092 7.21387
+C24.3472 6.67864 23.8232 6.34623 23.0795 6.34623 C22.319 6.34623 21.8908 6.6899 21.8908 7.15753
+V7.16316 C21.8908 7.60262 22.2739 7.83361 23.1472 7.997 L23.981 8.15475 C25.705 8.48716 26.505
+9.18577 26.505 10.4872 V10.4929 C26.505 12.1155 25.2317 13.1465 23.0795 13.1465 Z
+M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
+`;
+    const { MAX_COMMENTS_PER_ORDER, MAX_REPLIES_PER_COMMENT, MAX_REPLIES_PER_ORDER, SORT_OPTIONS } = model;
 
     function createCommentView({
+        apiAvatarUrls = new WeakMap(),
         injectStyleOnce,
         onLoadMore = () => {},
         onNativeAction = () => {},
+        onOpenNativePhoto = () => false,
         onOrderChange = () => {},
         onRefresh = () => {},
         onRendered = () => {},
@@ -49,10 +71,13 @@
         let mountedChatLog = null;
         let assignedChatLogId = false;
         let originalChatAriaHidden = null;
+        let chatVisibilityObserver = null;
+        let nativeChatHidden = false;
         let tablist = null;
         let chatTab = null;
         let commentTab = null;
         let commentPanel = null;
+        let photoDialog = null;
         let splitter = null;
         let splitTitle = null;
         let layoutMode = "tabs";
@@ -209,7 +234,7 @@
   color:var(--bcvc-text);
 }
 #${TABLIST_ID} button:focus-visible,
-#${COMMENT_PANEL_ID} button:focus-visible{
+#${COMMENT_PANEL_ID} button:not(.bcvc-sort-button):focus-visible{
   outline:2px solid var(--bct-focus-ring);
   outline-offset:-2px;
 }
@@ -284,7 +309,6 @@
 #${SPLITTER_ID}:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:-2px}
 #${COMMENT_PANEL_ID}{
   --bcvc-font-family:inherit;
-  --bcvc-toolbar-font-family:var(--bcvc-font-family,inherit);
   --bcvc-author-font-size:14px;
   --bcvc-author-font-weight:700;
   --bcvc-author-line-height:18px;
@@ -298,7 +322,6 @@
   --bcvc-message-line-height:1.5;
   --bcvc-message-letter-spacing:normal;
   --bcvc-surface:var(--bct-bg);
-  --bcvc-surface-raised:var(--bct-surface);
   --bcvc-surface-soft:var(--bct-surface-weak);
   --bcvc-text:var(--bct-text-body);
   --bcvc-text-base:var(--bct-text-muted);
@@ -306,6 +329,7 @@
   --bcvc-border:var(--bct-border-alpha);
   --bcvc-brand:var(--bct-brand-text);
   --bcvc-hover:var(--bct-hover);
+  --bcvc-content-inset:16px;
   position:absolute;
   z-index:1;
   top:var(--bcvc-panel-top,44px);
@@ -320,7 +344,7 @@
   overscroll-behavior:contain;
   scrollbar-gutter:stable;
   contain:size layout paint;
-  container-type:inline-size;
+  container-type:size;
   background:var(--bcvc-surface);
   color:var(--bcvc-text-base);
   font-family:var(--bcvc-font-family,inherit);
@@ -336,16 +360,26 @@
   display:flex;
   flex-wrap:wrap;
   align-items:center;
-  gap:6px;
+  gap:6px 12px;
   min-width:0;
   min-height:44px;
-  padding:6px 10px 6px 12px;
+  padding-block:7px;
+  padding-inline:var(--bcvc-content-inset);
   border-bottom:1px solid var(--bcvc-border);
   background:color-mix(in srgb,var(--bcvc-surface) 94%,transparent);
   backdrop-filter:blur(8px);
 }
+/* Let the two-row toolbar scroll away when the split leaves little room for comments. */
+@container (max-height:110px){.bcvc-toolbar{position:static}}
+.bcvc-toolbar-summary{
+  display:flex;
+  flex:0 1 auto;
+  align-items:center;
+  gap:6px;
+  min-width:0;
+}
 .bcvc-count{
-  flex:1 1 72px;
+  flex:0 1 auto;
   min-width:0;
   overflow:hidden;
   color:var(--bcvc-text);
@@ -358,15 +392,43 @@
 }
 .bcvc-sort{
   display:flex;
-  flex:0 1 auto;
+  flex:0 0 auto;
   align-items:center;
-  gap:2px;
-  padding:2px;
-  border-radius:var(--bct-radius-md);
-  max-width:100%;
-  background:var(--bcvc-surface-soft);
+  gap:8px;
+  margin-inline-start:auto;
 }
-.bcvc-sort-button,
+.bcvc-sort-button{
+  position:relative;
+  min-height:28px;
+  border:0;
+  border-radius:0;
+  padding:4px 6px;
+  background:transparent;
+  color:var(--bct-text-secondary);
+  font-family:var(--bcvc-toolbar-font-family,"Sandoll Nemony2",sans-serif);
+  font-size:13px;
+  font-weight:400;
+  line-height:14px;
+  letter-spacing:normal;
+  white-space:nowrap;
+  cursor:pointer;
+}
+.bcvc-sort-button+.bcvc-sort-button::before{
+  content:"";
+  position:absolute;
+  top:50%;
+  inset-inline-start:-5px;
+  width:2px;
+  height:2px;
+  transform:translateY(-50%);
+  border-radius:50%;
+  background:var(--bct-separator-dot);
+  pointer-events:none;
+}
+.bcvc-sort-button[aria-pressed="true"]{color:var(--bct-text-cool-stronger)}
+.bcvc-sort-button:is(:hover,:active,:focus-visible){border-radius:var(--bct-radius-sm);background:var(--bct-overlay-hover)}
+.bcvc-sort-button:focus-visible{outline:none}
+@media (forced-colors:active){.bcvc-sort-button:focus-visible{outline:2px solid Highlight;outline-offset:-2px}}
 .bcvc-icon-button{
   min-width:0;
   min-height:28px;
@@ -381,27 +443,25 @@
   white-space:nowrap;
   cursor:pointer;
 }
-.bcvc-sort-button{font-family:var(--bcvc-toolbar-font-family,var(--bcvc-font-family,inherit))}
-.bcvc-sort-button:hover,
 .bcvc-icon-button:hover{background:var(--bcvc-hover);color:var(--bcvc-text)}
-.bcvc-sort-button[aria-pressed="true"]{background:var(--bcvc-surface-raised);color:var(--bcvc-brand)}
 .bcvc-icon-button{display:grid;place-items:center;flex:0 0 28px;width:28px;padding:0}
 .bcvc-icon-button svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.8}
 .bcvc-sort-button:disabled,
 .bcvc-icon-button:disabled{cursor:default;opacity:.45}
-.bcvc-list{min-width:0;padding:0 6px 0 8px}
+.bcvc-list{min-width:0;padding-inline:var(--bcvc-content-inset)}
 .bcvc-comment{
   position:relative;
   min-width:0;
   min-height:0;
-  padding:12px 0 7px 46px;
+  padding-block:12px 7px;
+  padding-inline-start:46px;
   content-visibility:auto;
   contain-intrinsic-size:auto 74px;
 }
 .bcvc-avatar{
   position:absolute;
   top:12px;
-  left:0;
+  inset-inline-start:0;
   display:block;
   width:36px;
   height:36px;
@@ -416,13 +476,10 @@
 .bcvc-avatar:not(:disabled):hover::after{border-color:var(--bcvc-brand)}
 .bcvc-avatar:disabled{cursor:default}
 .bcvc-avatar::after{content:"";position:absolute;inset:0;border:1px solid var(--bct-border-alpha-weaker);border-radius:inherit;pointer-events:none}
-.bcvc-avatar-image,.bcvc-avatar-native-visual{display:block;width:100%;height:100%;border-radius:inherit}
+.bcvc-avatar-image{display:block;width:100%;height:100%;border-radius:inherit}
 .bcvc-avatar-image{object-fit:cover}
-.bcvc-avatar-native-visual{background-position:center;background-repeat:no-repeat;background-size:cover}
-.bcvc-avatar-fallback{background-image:url("https://ssl.pstatic.net/static/nng/glive/image/default_profile_light.png");background-position:center;background-repeat:no-repeat;background-size:cover}
-html[dark] .bcvc-avatar-fallback,
-body[theme="dark"] .bcvc-avatar-fallback,
-.theme_dark .bcvc-avatar-fallback{background-image:url("https://ssl.pstatic.net/static/nng/glive/image/default_profile_dark.png")}
+.bcvc-avatar-fallback{background-image:url("https://ssl.pstatic.net/static/nng/glive/image/default_profile_dark.png");background-position:center;background-repeat:no-repeat;background-size:cover}
+@container style(--bct-scheme:light){.bcvc-avatar-fallback{background-image:url("https://ssl.pstatic.net/static/nng/glive/image/default_profile_light.png")}}
 .bcvc-meta{display:flex;align-items:center;gap:6px;min-width:0;min-height:18px}
 .bcvc-author{display:block;min-width:0;overflow:hidden;border:0;padding:0;background:transparent;color:var(--bcvc-text);font-family:inherit;font-size:var(--bcvc-author-font-size,14px);font-weight:var(--bcvc-author-font-weight,700);line-height:var(--bcvc-author-line-height,18px);letter-spacing:var(--bcvc-author-letter-spacing,normal);text-align:left;text-overflow:ellipsis;white-space:nowrap;appearance:none}
 .bcvc-author:not(:disabled){cursor:pointer}
@@ -431,12 +488,11 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-date{flex:0 0 auto;color:var(--bcvc-text-weak);font-family:inherit;font-size:var(--bcvc-date-font-size,12px);font-weight:var(--bcvc-date-font-weight,400);line-height:var(--bcvc-date-line-height,18px);letter-spacing:var(--bcvc-date-letter-spacing,normal);white-space:nowrap}
 .bcvc-badge{flex:0 0 auto;border-radius:var(--bct-radius-sm);padding:0 4px;font-family:inherit;font-size:9px;font-weight:700;line-height:15px}
 .bcvc-writer{background:var(--bct-brand-weak);color:var(--bct-text)}
-.bcvc-message{min-width:0;margin-top:2px;color:var(--bcvc-text);font-family:inherit;font-size:var(--bcvc-message-font-size,15px);font-weight:var(--bcvc-message-font-weight,400);line-height:var(--bcvc-message-line-height,1.5);letter-spacing:var(--bcvc-message-letter-spacing,normal);overflow-wrap:anywhere;white-space:pre-wrap}
+.bcvc-message{min-width:0;margin-top:2px;color:var(--bcvc-text);font-family:inherit;font-size:var(--bcvc-message-font-size,15px);font-weight:var(--bcvc-message-font-weight,400);line-height:var(--bcvc-message-line-height,1.5);letter-spacing:var(--bcvc-message-letter-spacing,normal);word-break:break-all;overflow-wrap:break-word;white-space:pre-line}
 .bcvc-message-content{display:inline}
-.bcvc-message-toggle{display:block;min-height:24px;border:0;padding:2px 0;background:transparent;color:var(--bcvc-brand);font-family:inherit;font-size:12px;font-weight:600;line-height:20px;text-align:left;cursor:pointer}
-.bcvc-message-toggle:hover{text-decoration:underline}
-.bcvc-best{display:inline-flex;align-items:center;justify-content:center;min-width:39px;height:18px;margin:1px 6px 0 0;border-radius:var(--bct-radius-sm);padding:0 4px;background:#41bd53;color:#fff;font-family:inherit;font-size:9px;font-weight:700;line-height:18px;vertical-align:top}
-.bcvc-timecode{display:inline-block;min-height:0;margin:2px 8px 0 0;border:0;border-radius:var(--bct-radius-sm);padding:0 3px;background:color-mix(in srgb,var(--bct-brand-weak) 40%,transparent);color:var(--bcvc-brand);font-family:inherit;font-size:15px;font-weight:600;line-height:16px;vertical-align:top;cursor:pointer}
+.bcvc-message-toggle{display:inline-block;border:0;margin:0;padding:0;background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer}
+.bcvc-best{display:inline-block;width:39px;height:18px;margin:1px 6px 0 0;vertical-align:top}
+.bcvc-timecode{display:inline-block;min-height:0;margin:2px 8px 0 0;border:0;border-radius:4px;padding:0 3px;background:var(--bct-brand-weaker);color:var(--bct-brand-text-base);font-family:inherit;font-size:15px;font-weight:600;line-height:16px;vertical-align:top;cursor:pointer}
 .bcvc-comment-footer{display:flex;align-items:flex-start;justify-content:space-between;min-height:25px;margin-top:2px}
 .bcvc-reply-toggle{display:block;margin:0 0 0 4px;border:0;padding:3px 4px 2px 6px;background:transparent;color:var(--bcvc-brand);font-family:inherit;font-size:13px;font-weight:700;line-height:16px;text-align:left;cursor:pointer}
 .bcvc-reply-toggle svg{display:inline-block;width:14px;height:14px;margin:1px 0 0;vertical-align:top}
@@ -450,29 +506,36 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-buff-native-icon{font-style:normal}
 .bcvc-buff-label{display:inline-flex;align-items:center;justify-content:center;width:47px;height:23px;border:2px solid var(--bcvc-border);border-radius:var(--bct-radius-full);font-size:11px;font-weight:700;line-height:19px}
 .bcvc-buff-label::after{content:"↑";margin-left:2px;font-size:12px;line-height:1}
-.bcvc-buff-count{display:inline-block;margin:5px 3px 0;color:var(--color-content-04,var(--bcvc-text-weak));font-family:inherit;font-size:13px;font-weight:500;line-height:16px}
+.bcvc-buff-count{display:inline-block;margin:5px 3px 0;color:var(--bct-text-muted);font-family:inherit;font-size:13px;font-weight:500;line-height:16px}
 .bcvc-buff[aria-pressed="true"] .bcvc-buff-count{color:var(--bcvc-brand);font-weight:600}
 .bcvc-replies{min-width:0;margin:4px 0 0 12px}
 .bcvc-replies[hidden]{display:none!important}
-.bcvc-replies .bcvc-comment{padding:9px 0 5px 30px}
+.bcvc-replies .bcvc-comment{padding-block:9px 5px;padding-inline-start:30px}
 .bcvc-replies .bcvc-avatar{top:9px;width:22px;height:22px}
 .bcvc-replies .bcvc-message{font-size:14px;line-height:1.5}
 .bcvc-mention{display:inline-block;margin-right:5px;color:var(--bcvc-brand);font-size:15px;font-weight:700;line-height:20px}
 .bcvc-reply-limit{margin:3px 0 4px 20px;color:var(--bcvc-text-weak);font-size:12px;line-height:18px}
 .bcvc-reply-limit[hidden]{display:none!important}
-.bcvc-comment[data-bcvc-deleted="1"]{padding-left:0}
-.bcvc-attachments{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;overflow:hidden;border-radius:var(--bct-radius-md)}
-.bcvc-attachments[data-count="1"]{display:block}
-.bcvc-attachment{display:block;width:100%;height:96px;border-radius:var(--bct-radius-sm);background:var(--bcvc-surface-soft);object-fit:cover}
-.bcvc-attachments[data-count="1"] .bcvc-attachment{height:auto;max-height:190px;object-fit:contain}
-.bcvc-attachment[data-type="STICKER"],.bcvc-attachment[data-type="EMOTICON"]{object-fit:contain}
+.bcvc-comment[data-bcvc-deleted="1"]{padding-inline-start:0}
+.bcvc-attachments{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;margin-top:5px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;line-height:0}
+.bcvc-attachments[data-sticker-wide]{column-gap:15px}
+.bcvc-attachment{display:block;max-width:100%}
+.bcvc-attachment[data-type="STICKER"]{flex:none;width:103px;height:auto;border-radius:0;background:transparent;object-fit:contain}
+.bcvc-attachment[data-type="EMOTICON"]{flex:none;width:auto;height:auto;max-height:190px;object-fit:contain}
+.bcvc-photo{position:relative;flex:none;max-width:100%;min-width:0;width:103px;border:0;border-radius:var(--bct-radius-lg);padding:0;background:transparent;line-height:0;appearance:none;cursor:pointer}
+.bcvc-photo[data-layout="single"],.bcvc-photo[data-layout="wide"]{width:215px}
+.bcvc-photo::after{content:"";position:absolute;inset:0;border:1px solid var(--bct-photo-border);border-radius:inherit;pointer-events:none}
+.bcvc-photo .bcvc-attachment{width:100%;aspect-ratio:1;height:auto;border-radius:inherit;background:var(--bcvc-surface-soft);object-fit:cover}
+.bcvc-photo[data-layout="single"] .bcvc-attachment{width:215px;aspect-ratio:auto;max-height:440px}
+.bcvc-photo[data-layout="wide"] .bcvc-attachment{height:103px;aspect-ratio:auto}
+.bcvc-photo-more{position:absolute;bottom:6px;right:6px;border-radius:5px;padding:3px 5px 2px 6px;background:color-mix(in srgb,var(--bct-viewer-bg) 70%,transparent);color:var(--bct-viewer-fg);font-family:inherit;font-size:12px;font-weight:600;line-height:14px}
 .bcvc-state{display:grid;place-items:center;gap:10px;min-height:168px;margin:0;padding:28px 18px;color:var(--bcvc-text-weak);text-align:center}
 .bcvc-state p{margin:0;font-family:inherit;font-size:13px;font-weight:500;line-height:20px}
 .bcvc-state-button,.bcvc-more-button{min-height:36px;border:0;border-radius:var(--bct-radius-md);padding:8px 14px;background:color-mix(in srgb,var(--bcvc-surface-soft) 65%,transparent);color:var(--bcvc-text);font-family:inherit;font-size:13px;font-weight:700;line-height:18px;cursor:pointer}
 .bcvc-state-button:hover,.bcvc-more-button:hover{background:var(--bcvc-hover)}
-.bcvc-skeleton-list{padding:0 6px 0 8px}
-.bcvc-skeleton{position:relative;min-height:72px;padding:12px 0 12px 46px;overflow:hidden}
-.bcvc-skeleton::before{content:"";position:absolute;top:12px;left:0;width:36px;height:36px;border-radius:50%;background:var(--bcvc-surface-soft)}
+.bcvc-skeleton-list{padding-inline:var(--bcvc-content-inset)}
+.bcvc-skeleton{position:relative;min-height:72px;padding-block:12px;padding-inline-start:46px;overflow:hidden}
+.bcvc-skeleton::before{content:"";position:absolute;top:12px;inset-inline-start:0;width:36px;height:36px;border-radius:50%;background:var(--bcvc-surface-soft)}
 .bcvc-skeleton-line{height:10px;margin:2px 0 10px;border-radius:var(--bct-radius-full);background:var(--bcvc-surface-soft)}
 .bcvc-skeleton-line:first-child{width:44%}.bcvc-skeleton-line:last-child{width:82%;margin-bottom:0}
 .bcvc-skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,var(--bcvc-hover),transparent);animation:bcvc-shimmer 1.4s infinite}
@@ -482,14 +545,29 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-sr-only{position:absolute!important;width:1px!important;height:1px!important;margin:-1px!important;padding:0!important;overflow:hidden!important;clip:rect(0 0 0 0)!important;clip-path:inset(50%)!important;white-space:nowrap!important;border:0!important}
 .bcvc-more-button{width:100%;min-height:40px}
 .bcvc-sentinel{width:100%;height:1px}
-@keyframes bcvc-shimmer{to{transform:translateX(100%)}}
-@container (max-width:300px){
-  .bcvc-toolbar{align-items:stretch}
-  .bcvc-count{flex:1 1 calc(100% - 34px)}
-  .bcvc-sort{order:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:1 1 100%}
-  .bcvc-sort-button{width:100%;padding-right:3px;padding-left:3px}
-  .bcvc-icon-button{margin-left:auto}
+.bcvc-photo-viewer[open]{
+  position:fixed;inset:0;display:block;box-sizing:border-box;width:100%;height:100%;
+  max-width:none;max-height:none;margin:0;border:0;padding:0;overflow:hidden;
+  background:var(--bct-viewer-bg);color:var(--bct-viewer-fg);font:inherit;
 }
+.bcvc-photo-viewer::backdrop{background:var(--bct-viewer-bg)}
+.bcvc-photo-stage{position:absolute;inset:16px;display:flex;overflow:auto;overscroll-behavior:contain}
+.bcvc-photo-stage img{flex:none;display:block;width:auto;height:auto;max-width:100%;max-height:100%;margin:auto;object-fit:contain}
+.bcvc-photo-stage img[data-zoomed]{max-width:none;max-height:none}
+.bcvc-photo-viewer button{display:grid;place-items:center;border:0;padding:8px;background:transparent;color:inherit;opacity:.8;cursor:pointer}
+.bcvc-photo-viewer button:disabled{opacity:.4;cursor:default}
+.bcvc-photo-viewer button:not(:disabled):is(:hover,:focus-visible){opacity:1}
+.bcvc-photo-viewer button:focus-visible{outline:2px solid currentColor;outline-offset:-3px}
+.bcvc-photo-viewer svg{display:block;width:32px;height:32px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(2px 2px 2px var(--bct-viewer-bg))}
+.bcvc-photo-counter,.bcvc-photo-actions{position:absolute;top:0}
+.bcvc-photo-counter{left:0;padding:8px;font-size:16px;line-height:24px;text-shadow:1px 1px 2px var(--bct-viewer-bg)}
+.bcvc-photo-actions{right:0;display:flex}
+.bcvc-photo-viewer .bcvc-photo-step{position:absolute;top:50%;transform:translateY(-50%);padding:24px 16px}
+.bcvc-photo-step[data-direction="prev"]{left:0}
+.bcvc-photo-step[data-direction="next"]{right:0}
+.bcvc-photo-status{position:absolute;inset:50% 0 auto;margin:0;text-align:center}
+.bcvc-photo-viewer [hidden]{display:none}
+@keyframes bcvc-shimmer{to{transform:translateX(100%)}}
 @media (prefers-reduced-motion:reduce){.bcvc-skeleton::after{animation:none}}
 `
             );
@@ -511,9 +589,12 @@ body[theme="dark"] .bcvc-avatar-fallback,
             // Native comment rows inherit body typography, not the branded chat heading.
             const fallbackFontFamily = document.body ? getComputedStyle(document.body).fontFamily : "inherit";
             const fontFamily = measurements.fontFamily || fallbackFontFamily;
-            const toolbarFontFamily = measurements.toolbarFontFamily || fontFamily;
             if (fontFamily) commentPanel.style.setProperty("--bcvc-font-family", fontFamily);
-            if (toolbarFontFamily) commentPanel.style.setProperty("--bcvc-toolbar-font-family", toolbarFontFamily);
+            if (measurements.toolbarFontFamily) {
+                commentPanel.style.setProperty("--bcvc-toolbar-font-family", measurements.toolbarFontFamily);
+            } else {
+                commentPanel.style.removeProperty("--bcvc-toolbar-font-family");
+            }
             for (const [prefix, values] of Object.entries(measurements.typography || {})) {
                 for (const [property, value] of Object.entries({
                     "font-size": values.fontSize,
@@ -560,12 +641,46 @@ body[theme="dark"] .bcvc-avatar-fallback,
             syncSplitLayout(panelTop, panelHeight);
         }
 
-        function isSplit() {
+        function hasSplitLayout() {
             return layoutMode === "split" && Boolean(mountedChatLog && !mountedHeader?.contains(mountedChatLog));
         }
 
+        function isSplit() {
+            return hasSplitLayout() && !nativeChatHidden;
+        }
+
         function isCommentsVisible() {
-            return Boolean(commentPanel && (isSplit() || !mountedChatLog || selectedTab === "comments"));
+            return Boolean(commentPanel && (hasSplitLayout() || !mountedChatLog || selectedTab === "comments"));
+        }
+
+        function isNativeChatHidden() {
+            for (let node = mountedChatLog; node && node !== mountedContainer; node = node.parentElement) {
+                if (node.hidden || node.getAttribute("aria-hidden") === "true") return true;
+                const style = getComputedStyle(node);
+                if (["hidden", "collapse"].includes(style.visibility) || style.display === "none") return true;
+            }
+            return false;
+        }
+
+        function syncChatVisibility() {
+            if (hasSplitLayout() && isNativeChatHidden() !== nativeChatHidden) updateTabState();
+        }
+
+        function observeChatAncestors() {
+            chatVisibilityObserver.disconnect();
+            for (let node = mountedChatLog; node && node !== mountedContainer; node = node.parentElement) {
+                chatVisibilityObserver.observe(node, {
+                    attributes: true,
+                    attributeFilter: ["class", "style", "hidden", "aria-hidden"],
+                });
+            }
+        }
+
+        function restoreChatTabHiddenState() {
+            if (!mountedChatLog?.hasAttribute("data-bcvc-tab-hidden")) return;
+            mountedChatLog.removeAttribute("data-bcvc-tab-hidden");
+            if (originalChatAriaHidden === null) mountedChatLog.removeAttribute("aria-hidden");
+            else mountedChatLog.setAttribute("aria-hidden", originalChatAriaHidden);
         }
 
         function clearSplitChatMarkers() {
@@ -721,35 +836,27 @@ body[theme="dark"] .bcvc-avatar-fallback,
             });
         }
 
-        function appendCommentText(container, text, { allowTimecodes = true } = {}) {
+        function appendCommentText(container, text, { allowTimecodes = true, sourceText = text } = {}) {
             const content = String(text || "");
             if (!allowTimecodes || !content) {
                 container.textContent = content;
                 return;
             }
 
-            TIMECODE_SCAN_RE.lastIndex = 0;
             let cursor = 0;
-            let match = TIMECODE_SCAN_RE.exec(content);
-            while (match) {
-                const label = match[1];
-                const labelIndex = match.index + match[0].lastIndexOf(label);
-                const seconds = model.parseTimecodeSeconds(label);
-                if (labelIndex > cursor) container.append(content.slice(cursor, labelIndex));
-                if (Number.isFinite(seconds)) {
-                    const button = document.createElement("button");
-                    button.type = "button";
-                    button.className = "bcvc-timecode";
-                    button.textContent = label;
-                    button.setAttribute("data-bcvc-action", "time");
-                    button.setAttribute("data-bcvc-seconds", String(seconds));
-                    button.setAttribute("aria-label", `${label}로 이동`);
-                    container.appendChild(button);
-                } else {
-                    container.append(label);
-                }
-                cursor = labelIndex + label.length;
-                match = TIMECODE_SCAN_RE.exec(content);
+            for (const { label, seconds, index } of root.utils.commentTimecodes(sourceText)) {
+                // A preview can end partway through a timecode. Only link complete tokens from the original.
+                if (!content.startsWith(label, index)) break;
+                if (index > cursor) container.append(content.slice(cursor, index));
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "bcvc-timecode";
+                button.textContent = label;
+                button.setAttribute("data-bcvc-action", "time");
+                button.setAttribute("data-bcvc-seconds", String(seconds));
+                button.setAttribute("aria-label", `${label}로 이동`);
+                container.appendChild(button);
+                cursor = index + label.length;
             }
             if (cursor < content.length) container.append(content.slice(cursor));
         }
@@ -776,9 +883,10 @@ body[theme="dark"] .bcvc-avatar-fallback,
 
             const apiUrl = model.normalizeImageUrl(item?.row?.user?.profileImageUrl, location.href);
             if (apiUrl && !isNativeDefaultProfileUrl(apiUrl)) {
-                avatar.setAttribute("data-bcvc-api-avatar-url", apiUrl);
+                apiAvatarUrls.set(avatar, apiUrl);
                 const image = document.createElement("img");
                 image.className = "bcvc-avatar-image";
+                image.referrerPolicy = "no-referrer";
                 image.src = apiUrl;
                 image.alt = "";
                 image.width = 36;
@@ -792,24 +900,217 @@ body[theme="dark"] .bcvc-avatar-fallback,
             return avatar;
         }
 
+        function createAttachmentImage(attachment) {
+            const image = document.createElement("img");
+            image.className = "bcvc-attachment";
+            image.referrerPolicy = "no-referrer";
+            image.alt = attachment.type === "PHOTO" ? "" : "댓글 스티커";
+            image.loading = "lazy";
+            image.draggable = false;
+            image.dataset.type = attachment.type;
+            image.src = attachment.type === "PHOTO" ? model.getPhotoThumbnailUrl(attachment.src) : attachment.src;
+            return image;
+        }
+
         function createAttachments(comment) {
-            const attachments = model.normalizeAttachments(comment, { baseUrl: location.href, maxItems: 5 });
+            // A native row may carry one sticker alongside five photos.
+            const attachments = model.normalizeAttachments(comment, { baseUrl: location.href, maxItems: 6 });
             if (!attachments.length) return null;
 
             const wrapper = document.createElement("div");
             wrapper.className = "bcvc-attachments";
-            wrapper.setAttribute("data-count", String(attachments.length));
-            for (const attachment of attachments) {
-                const image = document.createElement("img");
-                image.className = "bcvc-attachment";
-                image.src = attachment.src;
-                image.alt = attachment.type === "PHOTO" ? "댓글 첨부 이미지" : "댓글 스티커";
-                image.loading = "lazy";
-                image.draggable = false;
-                image.setAttribute("data-type", attachment.type);
-                wrapper.appendChild(image);
+            const sticker = attachments.find((item) => item.type === "STICKER");
+            if (sticker) wrapper.appendChild(createAttachmentImage(sticker));
+            for (const emoticon of attachments.filter((item) => item.type === "EMOTICON").slice(0, 5)) {
+                wrapper.appendChild(createAttachmentImage(emoticon));
+            }
+
+            const photos = attachments.filter((item) => item.type === "PHOTO").slice(0, 5);
+            if (!photos.length) return wrapper;
+            const sources = photos.map((photo) => photo.src);
+            const single = photos.length === 1 && !sticker;
+            const wide = !single && photos.every((photo) => photo.width > photo.height);
+            let visibleCount = photos.length;
+            if (wide) visibleCount = Math.min(photos.length, sticker ? 1 : 2);
+            else if (sticker) visibleCount = Math.min(photos.length, 4);
+            if (sticker && wide) wrapper.setAttribute("data-sticker-wide", "");
+
+            wrapper.addEventListener("focusin", ({ target }) => {
+                if (!(target instanceof HTMLButtonElement) || wrapper.scrollWidth <= wrapper.clientWidth) return;
+                const strip = wrapper.getBoundingClientRect();
+                const tile = target.getBoundingClientRect();
+                if (tile.right > strip.right) wrapper.scrollLeft += tile.right - strip.right;
+                else if (tile.left < strip.left) wrapper.scrollLeft -= strip.left - tile.left;
+            });
+
+            for (let index = 0; index < visibleCount; index++) {
+                const photo = photos[index];
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "bcvc-photo";
+                button.dataset.layout = single ? "single" : wide ? "wide" : "square";
+                button.setAttribute("aria-label", `첨부 사진 ${index + 1}/${photos.length} 크게 보기`);
+                button.setAttribute("aria-haspopup", "dialog");
+                button.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    openPhotoViewer(sources, index, button);
+                });
+                const image = createAttachmentImage(photo);
+                if (single && photo.height > photo.width) image.style.aspectRatio = `${photo.width} / ${photo.height}`;
+                button.appendChild(image);
+                if (wide && index === visibleCount - 1 && photos.length > visibleCount) {
+                    const more = document.createElement("span");
+                    more.className = "bcvc-photo-more";
+                    more.textContent = `+${photos.length - visibleCount}`;
+                    button.appendChild(more);
+                }
+                wrapper.appendChild(button);
             }
             return wrapper;
+        }
+
+        function createPhotoControl(label, pathData, activate) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.title = label;
+            button.setAttribute("aria-label", label);
+            const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            icon.setAttribute("viewBox", "0 0 24 24");
+            icon.setAttribute("aria-hidden", "true");
+            const path = document.createElementNS(icon.namespaceURI, "path");
+            path.setAttribute("d", pathData);
+            icon.append(path);
+            button.append(icon);
+            button.addEventListener("click", activate);
+            return button;
+        }
+
+        function dismissPhotoViewer() {
+            if (!photoDialog) return;
+            const dialog = photoDialog;
+            photoDialog = null;
+            if (dialog.open) dialog.close();
+            dialog.remove();
+        }
+
+        function openPhotoViewer(photos, index, trigger) {
+            if (!isCommentsVisible() || !commentPanel?.contains(trigger) || !photos[index] || photoDialog) return;
+            // Use CHZZK's complete viewer when the current native row owns these same photos.
+            if (onOpenNativePhoto(trigger, photos, index)) return;
+
+            const dialog = document.createElement("dialog");
+            dialog.className = "bcvc-photo-viewer";
+            dialog.setAttribute("aria-label", "댓글 사진 확대");
+            const stage = document.createElement("div");
+            stage.className = "bcvc-photo-stage";
+            stage.tabIndex = -1;
+            stage.setAttribute("role", "group");
+            stage.setAttribute("aria-label", "사진 보기");
+            let image;
+            const counter = document.createElement("span");
+            counter.className = "bcvc-photo-counter";
+            counter.setAttribute("aria-live", "polite");
+            counter.hidden = photos.length === 1;
+            const status = document.createElement("p");
+            status.className = "bcvc-photo-status";
+            status.setAttribute("role", "status");
+            const actions = document.createElement("div");
+            actions.className = "bcvc-photo-actions";
+            const lens = "M17 17l4.5 4.5M18.5 11a7.5 7.5 0 1 1-15 0 7.5 7.5 0 1 1 15 0";
+            const zoomIn = createPhotoControl("확대", lens + "M8 11h6m-3-3v6", () => setZoom(true));
+            const zoomOut = createPhotoControl("축소", lens + "M8 11h6", () => setZoom(false));
+            const close = createPhotoControl("닫기", "m6 6 12 12m0-12L6 18", () => dialog.close());
+            actions.append(zoomIn, zoomOut, close);
+            const previous = createPhotoControl("이전 사진", "m15 4-8 8 8 8", () => showPhoto(index - 1));
+            const next = createPhotoControl("다음 사진", "m9 4 8 8-8 8", () => showPhoto(index + 1));
+            previous.className = next.className = "bcvc-photo-step";
+            previous.dataset.direction = "prev";
+            next.dataset.direction = "next";
+            previous.hidden = next.hidden = photos.length === 1;
+            dialog.append(stage, counter, status, previous, next, actions);
+
+            function syncControls() {
+                const focused = document.activeElement;
+                const zoomed = image.hasAttribute("data-zoomed");
+                zoomIn.disabled = zoomed || !image.naturalWidth || image.hidden;
+                zoomOut.disabled = !zoomed || image.hidden;
+                previous.disabled = index === 0;
+                next.disabled = index === photos.length - 1;
+                if (focused instanceof HTMLButtonElement && focused.disabled && dialog.contains(focused)) {
+                    stage.focus({ preventScroll: true });
+                }
+            }
+
+            function setZoom(zoomed) {
+                image.style.width = zoomed
+                    ? `${Math.max(image.naturalWidth, image.getBoundingClientRect().width * 2)}px`
+                    : "";
+                image.toggleAttribute("data-zoomed", zoomed);
+                if (!zoomed) stage.scrollTop = stage.scrollLeft = 0;
+                syncControls();
+            }
+
+            function showPhoto(position) {
+                if (position < 0 || position >= photos.length) return;
+                index = position;
+                status.textContent = "사진 불러오는 중";
+                status.hidden = false;
+                // A slow previous image must never appear under the next photo's number.
+                image = document.createElement("img");
+                image.referrerPolicy = "no-referrer";
+                image.draggable = false;
+                image.hidden = true;
+                image.alt = `댓글 사진 ${position + 1} / ${photos.length}`;
+                stage.replaceChildren(image);
+                image.src = photos[position];
+                setZoom(false);
+                counter.textContent = `${position + 1} / ${photos.length}`;
+            }
+
+            stage.addEventListener(
+                "load",
+                (event) => {
+                    if (event.target !== image) return;
+                    image.hidden = false;
+                    status.hidden = true;
+                    syncControls();
+                },
+                true
+            );
+            stage.addEventListener(
+                "error",
+                (event) => {
+                    if (event.target === image) status.textContent = "사진을 불러올 수 없음.";
+                },
+                true
+            );
+            stage.addEventListener("dblclick", (event) => {
+                if (event.target === image) setZoom(!image.hasAttribute("data-zoomed"));
+            });
+            dialog.addEventListener("keydown", (event) => {
+                if (event.altKey || event.ctrlKey || event.metaKey) return;
+                if (event.key === "Escape") dialog.close();
+                else if (event.key === "ArrowLeft") showPhoto(index - 1);
+                else if (event.key === "ArrowRight") showPhoto(index + 1);
+                else return;
+                event.preventDefault();
+                event.stopPropagation();
+            });
+            dialog.addEventListener(
+                "close",
+                () => {
+                    if (photoDialog !== dialog) return;
+                    photoDialog = null;
+                    dialog.remove();
+                    if (trigger.isConnected && isCommentsVisible()) trigger.focus({ preventScroll: true });
+                },
+                { once: true }
+            );
+            (document.fullscreenElement || document.body).append(dialog);
+            photoDialog = dialog;
+            showPhoto(index);
+            dialog.showModal();
+            stage.focus({ preventScroll: true });
         }
 
         function createCommentFooter(item) {
@@ -879,32 +1180,45 @@ body[theme="dark"] .bcvc-avatar-fallback,
             return toggle;
         }
 
-        function renderCommentMessage(record, expanded) {
-            const { allowTimecodes, collapsedText, content, fullText, toggle } = record;
-            content.replaceChildren();
-            appendCommentText(content, expanded ? fullText : collapsedText, { allowTimecodes });
-            toggle.setAttribute("aria-expanded", String(expanded));
-            toggle.textContent = expanded ? "접기" : "더보기";
-        }
-
-        function createMessageToggle(message, fullText, allowTimecodes, commentId) {
+        function appendCommentMessage(message, fullText, allowTimecodes, commentId) {
             const collapsedText = model.getCollapsedCommentText(fullText);
             const content = document.createElement("span");
             content.className = "bcvc-message-content";
             message.appendChild(content);
-            if (!collapsedText) {
-                appendCommentText(content, fullText, { allowTimecodes });
-                return null;
-            }
+            appendCommentText(content, collapsedText || fullText, { allowTimecodes, sourceText: fullText });
+            if (!collapsedText) return;
 
             const toggle = document.createElement("button");
             toggle.type = "button";
             toggle.className = "bcvc-message-toggle";
             toggle.setAttribute("data-bcvc-action", "message-toggle");
-            const record = { allowTimecodes, collapsedText, commentId, content, fullText, toggle };
-            messageToggleStates.set(toggle, record);
-            renderCommentMessage(record, false);
-            return toggle;
+            toggle.setAttribute("aria-expanded", "false");
+            toggle.textContent = "더보기";
+            messageToggleStates.set(toggle, { allowTimecodes, commentId, content, fullText });
+            message.appendChild(toggle);
+        }
+
+        function appendBestBadge(message) {
+            const svgNamespace = "http://www.w3.org/2000/svg";
+            const icon = document.createElementNS(svgNamespace, "svg");
+            icon.setAttribute("class", "bcvc-best");
+            icon.setAttribute("viewBox", "0 0 39 18");
+            icon.setAttribute("aria-hidden", "true");
+            const background = document.createElementNS(svgNamespace, "rect");
+            background.setAttribute("y", "0.5");
+            background.setAttribute("width", "39");
+            background.setAttribute("height", "17");
+            background.setAttribute("rx", "4.61538");
+            background.setAttribute("fill", "#41BD53");
+            const lettering = document.createElementNS(svgNamespace, "path");
+            lettering.setAttribute("d", BEST_BADGE_LETTERING);
+            lettering.setAttribute("fill", "white");
+            icon.append(background, lettering);
+
+            const label = document.createElement("span");
+            label.className = "bcvc-sr-only";
+            label.textContent = "BEST";
+            message.append(icon, label);
         }
 
         function createCommentRow(item, { includeReplies = true, reply = false, replyBudget = null } = {}) {
@@ -958,12 +1272,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
 
             const message = document.createElement("div");
             message.className = "bcvc-message";
-            if (item.best) {
-                const best = document.createElement("span");
-                best.className = "bcvc-best";
-                best.textContent = "BEST";
-                message.appendChild(best);
-            }
+            if (item.best) appendBestBadge(message);
             let messageText = deleted
                 ? "삭제된 댓글"
                 : !hasComment
@@ -981,9 +1290,8 @@ body[theme="dark"] .bcvc-avatar-fallback,
                     messageText = messageText.trimStart();
                 }
             }
-            const messageToggle = createMessageToggle(message, messageText, !deleted && !cleanBotHidden, commentId);
+            appendCommentMessage(message, messageText, !deleted && !cleanBotHidden, commentId);
             row.appendChild(message);
-            if (messageToggle) row.appendChild(messageToggle);
             if (!deleted && !cleanBotHidden) {
                 const attachments = createAttachments(comment);
                 if (attachments) row.appendChild(attachments);
@@ -1054,13 +1362,14 @@ body[theme="dark"] .bcvc-avatar-fallback,
         function createToolbar(state) {
             const toolbar = document.createElement("div");
             toolbar.className = "bcvc-toolbar";
+            const summary = document.createElement("div");
+            summary.className = "bcvc-toolbar-summary";
             const count = document.createElement("strong");
             count.className = "bcvc-count";
             count.setAttribute("data-bcvc-count", "1");
             count.textContent = Number.isFinite(state.totalCount)
                 ? `댓글 ${state.totalCount.toLocaleString()}`
                 : "댓글";
-            toolbar.appendChild(count);
 
             const sort = document.createElement("div");
             sort.className = "bcvc-sort";
@@ -1076,7 +1385,6 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 button.setAttribute("aria-pressed", String(activeOrder === option.order));
                 sort.appendChild(button);
             }
-            toolbar.appendChild(sort);
 
             const refresh = document.createElement("button");
             refresh.type = "button";
@@ -1086,7 +1394,8 @@ body[theme="dark"] .bcvc-avatar-fallback,
             refresh.title = "댓글 새로고침";
             refresh.disabled = state.loading;
             refresh.appendChild(createRefreshIcon());
-            toolbar.appendChild(refresh);
+            summary.append(count, refresh);
+            toolbar.append(summary, sort);
             return toolbar;
         }
 
@@ -1257,6 +1566,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
 
         function renderState(state, { restoreScroll = true } = {}) {
             if (!isCommentsVisible()) return;
+            dismissPhotoViewer();
             disconnectLoadMoreObserver();
             commentPanel.setAttribute("aria-busy", String(state.loading));
             commentPanel.replaceChildren(createCommentStateView(state));
@@ -1301,11 +1611,19 @@ body[theme="dark"] .bcvc-avatar-fallback,
             onRendered();
         }
 
-        function toggleCommentMessage(control) {
+        function expandCommentMessage(control) {
             const record = messageToggleStates.get(control);
             if (!record) return;
-            renderCommentMessage(record, control.getAttribute("aria-expanded") !== "true");
-            if (record.commentId) onRowRendered(record.commentId);
+            const { allowTimecodes, commentId, content, fullText } = record;
+            const restoreFocus = document.activeElement === control;
+            content.replaceChildren();
+            appendCommentText(content, fullText, { allowTimecodes });
+            control.remove();
+            if (restoreFocus) {
+                content.tabIndex = -1;
+                content.focus({ preventScroll: true });
+            }
+            if (commentId) onRowRendered(commentId);
         }
 
         function toggleCommentReplies(control) {
@@ -1374,7 +1692,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             if (action === "time") {
                 onTimecode(control);
             } else if (action === "message-toggle") {
-                toggleCommentMessage(control);
+                expandCommentMessage(control);
             } else if (action === "reply-toggle") {
                 toggleCommentReplies(control);
             } else if (action === "profile" || action === "buff") {
@@ -1401,34 +1719,40 @@ body[theme="dark"] .bcvc-avatar-fallback,
         function updateTabState({ focus = false } = {}) {
             const commentOnly = Boolean(commentTab) && !chatTab;
             const commentsSelected = commentOnly || selectedTab === "comments";
-            const split = isSplit();
-            const commentsVisible = split || commentsSelected;
+            const splitLayout = hasSplitLayout();
+            if (splitLayout) restoreChatTabHiddenState();
+            nativeChatHidden = splitLayout && isNativeChatHidden();
+            if (nativeChatHidden) stopSplitDrag();
+            const commentsVisible = splitLayout || commentsSelected;
             if (commentOnly) selectedTab = "comments";
-            tablist?.setAttribute("role", split ? "group" : "tablist");
-            if (chatTab) chatTab.hidden = split;
-            if (commentTab) commentTab.hidden = split;
+            tablist?.setAttribute("role", splitLayout ? "group" : "tablist");
+            if (chatTab) chatTab.hidden = splitLayout;
+            if (commentTab) commentTab.hidden = splitLayout;
             if (splitTitle) {
-                splitTitle.hidden = !split;
-                splitTitle.textContent = split ? (splitTop === "chat" ? "채팅 · 댓글" : "댓글 · 채팅") : "";
+                splitTitle.hidden = !splitLayout;
+                splitTitle.textContent = !splitLayout
+                    ? ""
+                    : nativeChatHidden
+                      ? "댓글"
+                      : splitTop === "chat"
+                        ? "채팅 · 댓글"
+                        : "댓글 · 채팅";
             }
             chatTab?.setAttribute("aria-selected", String(!commentsSelected));
             commentTab?.setAttribute("aria-selected", String(commentsSelected));
             if (chatTab) chatTab.tabIndex = commentsSelected ? -1 : 0;
             if (commentTab) commentTab.tabIndex = commentsSelected ? 0 : -1;
             if (mountedChatLog) {
-                if (commentsSelected && !split) {
+                if (commentsSelected && !splitLayout && !mountedChatLog.hasAttribute("data-bcvc-tab-hidden")) {
+                    originalChatAriaHidden = mountedChatLog.getAttribute("aria-hidden");
                     mountedChatLog.setAttribute("data-bcvc-tab-hidden", "1");
                     mountedChatLog.setAttribute("aria-hidden", "true");
-                } else {
-                    mountedChatLog.removeAttribute("data-bcvc-tab-hidden");
-                    if (originalChatAriaHidden === null) mountedChatLog.removeAttribute("aria-hidden");
-                    else mountedChatLog.setAttribute("aria-hidden", originalChatAriaHidden);
-                }
+                } else if (!commentsSelected || splitLayout) restoreChatTabHiddenState();
             }
             if (commentPanel) {
                 commentPanel.hidden = !commentsVisible;
-                commentPanel.setAttribute("role", split ? "region" : "tabpanel");
-                if (split) {
+                commentPanel.setAttribute("role", splitLayout ? "region" : "tabpanel");
+                if (splitLayout) {
                     commentPanel.removeAttribute("aria-labelledby");
                     commentPanel.setAttribute("aria-label", "댓글");
                 } else {
@@ -1436,7 +1760,10 @@ body[theme="dark"] .bcvc-avatar-fallback,
                     commentPanel.removeAttribute("aria-label");
                 }
             }
-            if (!commentsVisible) disconnectLoadMoreObserver();
+            if (!commentsVisible) {
+                dismissPhotoViewer();
+                disconnectLoadMoreObserver();
+            }
             syncNativeHeaderAppearance();
             if (focus) (commentsSelected ? commentTab : chatTab)?.focus();
         }
@@ -1477,13 +1804,12 @@ body[theme="dark"] .bcvc-avatar-fallback,
         function detachMountedChatLog() {
             stopSplitDrag();
             clearSplitChatMarkers();
+            chatVisibilityObserver?.disconnect();
+            chatVisibilityObserver = null;
+            nativeChatHidden = false;
             const chatLog = mountedChatLog;
-            chatLog?.removeAttribute("data-bcvc-tab-hidden");
+            restoreChatTabHiddenState();
             chatLog?.removeAttribute("data-bcvc-native-log");
-            if (chatLog) {
-                if (originalChatAriaHidden === null) chatLog.removeAttribute("aria-hidden");
-                else chatLog.setAttribute("aria-hidden", originalChatAriaHidden);
-            }
             if (assignedChatLogId && chatLog?.id === CHAT_PANEL_ID) chatLog.removeAttribute("id");
             mountedChatLog = null;
             assignedChatLogId = false;
@@ -1500,6 +1826,8 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 assignedChatLogId = true;
             }
             chatTab?.setAttribute("aria-controls", mountedChatLog.id);
+            chatVisibilityObserver = new MutationObserver(syncChatVisibility);
+            observeChatAncestors();
             return true;
         }
 
@@ -1529,7 +1857,14 @@ body[theme="dark"] .bcvc-avatar-fallback,
             }
         }
 
-        function setHeaderAppearanceSource(heading) {
+        function syncMountedAnchors(anchors) {
+            if (mountedChatLog !== anchors.chatLog) replaceChatLog(anchors.chatLog);
+            else if (chatVisibilityObserver) {
+                // The site can keep the log and header while replacing any wrapper between them.
+                observeChatAncestors();
+                syncChatVisibility();
+            }
+            const heading = anchors.appearanceHeading;
             const nextHeading = heading instanceof HTMLElement ? heading : mountedHeading;
             if (mountedAppearanceHeading === nextHeading) {
                 scheduleNativeHeaderSync();
@@ -1606,6 +1941,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
 
         function reattach(anchors) {
             if (!canReattach()) return false;
+            dismissPhotoViewer();
             resizeObserver?.disconnect();
             resizeObserver = null;
             if (layoutFrameId) cancelAnimationFrame(layoutFrameId);
@@ -1647,6 +1983,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
         }
 
         function destroy() {
+            dismissPhotoViewer();
             stopSplitDrag();
             disconnectLoadMoreObserver();
             resizeObserver?.disconnect();
@@ -1761,11 +2098,10 @@ body[theme="dark"] .bcvc-avatar-fallback,
             ownedNodesConnected,
             reattach,
             renderState,
-            replaceChatLog,
             restoreFocus: restoreCommentControlFocus,
             scheduleLayoutSync: scheduleNativeHeaderSync,
             setActiveOrder,
-            setHeaderAppearanceSource,
+            syncMountedAnchors,
             setLayout,
             setSelectedTab,
             showState,

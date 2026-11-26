@@ -365,6 +365,20 @@ test("multiview launcher inherits native fade timing as player controls toggle",
     assert.equal(w.getComputedStyle(launcher).transition, "opacity .3s linear");
 });
 
+test("launcher keyboard visibility follows the replacement native control root", async (t) => {
+    const { w } = setup(t);
+    const original = w.document.querySelector(".pzp-pc");
+    const replacement = original.cloneNode(true);
+    replacement.classList.remove("pzp-pc--controls");
+    original.replaceWith(replacement);
+    const launcher = () => replacement.querySelector("#cheese-spanner-multiview-launcher");
+    await waitForCondition(() => launcher()?.getAttribute("aria-hidden") === "true");
+    assert.equal(launcher().tabIndex, -1);
+    replacement.classList.add("pzp-pc--controls");
+    await waitForCondition(() => launcher()?.getAttribute("aria-hidden") === "false");
+    assert.equal(launcher().tabIndex, 0);
+});
+
 async function waitForChatUi(predicate) {
     for (let attempt = 0; attempt < 30; attempt++) {
         if (predicate()) return;
@@ -3502,6 +3516,230 @@ test("invalid or old session positions default to centered without invalidating 
     );
 });
 
+test("dragging the empty lower divider to the bottom collapses it, can be cancelled and restores from the tab session", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B, { keepPanelOpen: true });
+    const d = h.w.document;
+    const host = d.querySelector("[data-bcmv-host]");
+    const grid = d.querySelector(".bcmv-grid");
+    const bounds = () => ({ left: 0, top: 0, width: 960, height: 540 });
+    grid.getBoundingClientRect = host.getBoundingClientRect = bounds;
+    const rootDivider = () => grid.querySelector('[data-path="r"]');
+    const saved = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+    const initial = saved().dockTree;
+    const video = d.querySelector(`[data-bcmv-channel="${B}"] video`);
+    const pointer = (target, type, y) =>
+        target.dispatchEvent(
+            new h.w.MouseEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                button: 0,
+                clientX: 320,
+                clientY: y,
+            })
+        );
+    assert.equal(rootDivider().getAttribute("aria-valuemax"), "94");
+    pointer(rootDivider(), "pointerdown", 360);
+    pointer(h.w, "pointermove", 539);
+    assert.equal(rootDivider().dataset.axis, "columns");
+    pointer(h.w, "pointermove", 490);
+    assert.equal(rootDivider().dataset.axis, "rows", "pulling back before release restores the original split");
+    pointer(h.w, "pointercancel", 490);
+    assert.deepEqual(saved().dockTree, initial);
+    assert.equal(rootDivider().getAttribute("aria-valuenow"), "67");
+    pointer(rootDivider(), "pointerdown", 360);
+    pointer(h.w, "pointermove", 510);
+    pointer(h.w, "pointerup", 540);
+    const folded = saved();
+    assert.equal(folded.dockTree.axis, "columns");
+    assert.equal(folded.dockTree.a, A);
+    assert.equal(folded.dockTree.b, B);
+    assert.equal(grid.querySelectorAll(".bcmv-separator").length, 2);
+    assert.equal(host.hasAttribute("data-bcmv-packed"), false, "folding keeps the native frame in charge of sizing");
+    assert.equal(host.style.getPropertyValue("--bcmv-packed-aspect"), "");
+    assert.equal(d.querySelector(`[data-bcmv-channel="${B}"] video`), video);
+    const restored = setup(t, { savedSession: folded });
+    await tick();
+    assert.equal(restored.w.document.querySelectorAll(".bcmv-separator").length, 2);
+    h.click("controls");
+    h.click("reset-layout");
+    assert.deepEqual(saved().dockTree, initial);
+    assert.equal(host.hasAttribute("data-bcmv-packed"), false);
+    const end = new h.w.KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true });
+    assert.equal(rootDivider().dispatchEvent(end), true);
+    assert.deepEqual(saved().dockTree, initial);
+});
+
+test("pulling the folded live row grip opens empty slots at the pointer and preserves the upper layout", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B, { keepPanelOpen: true });
+    const d = h.w.document;
+    const host = d.querySelector("[data-bcmv-host]");
+    const grid = d.querySelector(".bcmv-grid");
+    grid.getBoundingClientRect = host.getBoundingClientRect = () =>
+        new h.w.DOMRect(100, 30, 960, host.dataset.bcmvPacked ? 360 : 540);
+    const frame = host.getBoundingClientRect();
+    const gripY = frame.bottom - 4;
+    const halfway = gripY - frame.height / 2;
+    const divider = () => grid.querySelector('[data-path="r"]');
+    const grip = () => grid.querySelector('[aria-label="접힌 하단 줄 펼치기"]');
+    const session = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+    const key = (target, key) =>
+        target.dispatchEvent(new h.w.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    const pointer = (target, type, y) =>
+        target.dispatchEvent(new h.w.MouseEvent(type, { bubbles: true, cancelable: true, clientX: 580, clientY: y }));
+    const fold = (y) => {
+        pointer(divider(), "pointerdown", y);
+        pointer(h.w, "pointerup", frame.bottom);
+    };
+    const video = grid.querySelector(`[data-bcmv-channel="${B}"] video`);
+    const requests = h.requests.length;
+
+    fold(frame.top + frame.height * (2 / 3));
+    const folded = session().dockTree;
+    assert.ok(grip());
+    assert.equal(grip().tabIndex, -1);
+    grip().focus();
+    assert.equal(d.activeElement, divider());
+    assert.equal(grip().getAttribute("aria-orientation"), "horizontal");
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    pointer(grip(), "pointerdown", gripY);
+    pointer(h.w, "pointerup", gripY);
+    assert.deepEqual(session().dockTree, folded);
+    pointer(grip(), "pointerdown", gripY);
+    pointer(h.w, "pointermove", halfway);
+    assert.equal(divider().getAttribute("aria-valuenow"), "50");
+    assert.deepEqual(session().dockTree, folded);
+    key(d.activeElement, "Escape");
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    assert.notEqual(d.activeElement, grip());
+
+    pointer(grip(), "pointerdown", gripY);
+    pointer(h.w, "pointerup", halfway);
+    const opened = session();
+    assert.equal(opened.dockTree.ratio, 0.5);
+    assert.deepEqual(opened.dockTree.a, folded);
+    assert.equal(h.w.CheeseSpanner.multiviewModel.treeLayout(opened.dockTree.b).cells.filter((c) => !c.id).length, 3);
+    const restored = setup(t, { savedSession: opened });
+    await tick();
+    assert.equal(restored.w.document.querySelector('.bcmv-grid [data-path="r"]').getAttribute("aria-valuenow"), "50");
+
+    fold(halfway + 4);
+    assert.equal(key(grip(), "ArrowUp"), true, "the grip leaves the arrow key available to the page");
+    assert.deepEqual(session().dockTree, folded);
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    assert.equal(grid.querySelector(`[data-bcmv-channel="${B}"] video`), video);
+    assert.equal(h.requests.length, requests);
+});
+
+test("dragging a live video against its own folded bottom edge reopens the row and commits only the chosen slot", async (t) => {
+    const packed = { axis: "columns", ratio: 2 / 3, a: A, b: B };
+    const h = setup(t, {
+        savedSession: {
+            version: 1,
+            layoutVersion: 3,
+            active: true,
+            customLayout: true,
+            channels: [{ id: A }, { id: B }],
+            dockTree: packed,
+        },
+    });
+    await tick();
+    const d = h.w.document;
+    const host = d.querySelector("[data-bcmv-host]");
+    const grid = d.querySelector(".bcmv-grid");
+    grid.getBoundingClientRect = host.getBoundingClientRect = () =>
+        new h.w.DOMRect(0, 0, 960, host.dataset.bcmvPacked ? 360 : 540);
+    assert.equal(host.getBoundingClientRect().height, 540, "a restored folded layout uses the full native frame");
+    const bottom = host.getBoundingClientRect().bottom;
+    const video = grid.querySelector(`[data-bcmv-channel="${B}"] video`);
+    const divider = () => grid.querySelector('[data-path="r"]');
+    const guide = () => grid.querySelector(".bcmv-drop-preview");
+    const savedTree = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession")).dockTree;
+    const pointer = (target, type, x, y) =>
+        target.dispatchEvent(
+            new h.w.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y })
+        );
+    const start = () => pointer(video, "pointerdown", 800, 180);
+    const move = (x, y) => pointer(h.w, "pointermove", x, y);
+    start();
+    move(800, bottom + 4);
+    assert.equal(guide().textContent, "하단에 배치");
+    assert.equal(host.getBoundingClientRect().height, 540);
+    move(160, 495);
+    assert.equal(parseFloat(guide().style.left), 0);
+    assert.deepEqual(savedTree(), packed);
+    move(800, 180);
+    assert.equal(guide().hidden, true);
+    assert.equal(host.getBoundingClientRect().height, 540);
+    move(480, bottom - 2);
+    h.w.dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(guide(), null);
+    assert.deepEqual(savedTree(), packed);
+    assert.equal(divider().dataset.axis, "columns");
+
+    const requests = h.requests.length;
+    start();
+    move(800, bottom - 1);
+    pointer(h.w, "pointerup", 480, 510);
+    const result = savedTree();
+    assert.equal(result.axis, "rows");
+    assert.equal(result.a.ratio, packed.ratio);
+    assert.equal(result.a.a, A);
+    assert.equal(result.b.a.b, B);
+    assert.equal(divider().dataset.axis, "rows");
+    assert.equal(grid.querySelector(`[data-bcmv-channel="${B}"] video`), video);
+    assert.equal(h.requests.length, requests);
+    assert.equal(h.w.location.pathname, `/live/${A}`);
+    assert.equal(h.w.CheeseSpanner.multiviewModel.validTree(result, [{ id: A }, { id: B }]), true);
+});
+
+test("a bottom-edge fold keeps occupied lower regions and only edits the selected branch", (t) => {
+    const m = setup(t).w.CheeseSpanner.multiviewModel;
+    const channels = [A, B, C, "d".repeat(32)].map((id) => ({ id }));
+    const tree = m.defaultTree(channels);
+    const handle = m.treeLayout(tree).handles[0];
+    assert.equal(handle.collapseBelow, false);
+    const shrunk = m.resizeSplit(tree, handle, 1);
+    assert.equal(shrunk.ratio, handle.upper);
+    assert.equal(m.validTree(shrunk, channels), true);
+    const two = m.defaultTree(channels.slice(0, 2));
+    const right = m.treeLayout(two).handles.find((item) => item.key === "rab");
+    const changed = m.resizeSplit(two, right, 1);
+    assert.equal(changed.a.b, B);
+    assert.equal(changed.a.a, A);
+    assert.equal(changed.b, two.b);
+    assert.equal(changed.ratio, two.ratio);
+});
+
+test("the bottom grip appears only when the layout has no open bottom row", (t) => {
+    const m = setup(t).w.CheeseSpanner.multiviewModel;
+    const channels = [A, B, C, "d".repeat(32), "e".repeat(32), "f".repeat(32)].map((id) => ({ id }));
+    const full = m.defaultTree(channels);
+    const grip = (tree) => m.splitLayout(tree).handles.find((item) => item.key === "bottom");
+    assert.equal(grip(full), undefined);
+    const stacked = { axis: "rows", ratio: 0.4, a: A, b: B };
+    assert.equal(grip(stacked), undefined, "an unmarked saved stack already has a lower row");
+    const sideBySide = { axis: "columns", ratio: 0.6, a: A, b: B };
+    const withLowerRow = m.resizeSplit(sideBySide, grip(sideBySide), 0.55);
+    assert.equal(grip(withLowerRow), undefined);
+    const filled = channels.slice(2, 5).reduce((tree, { id }) => m.addTree(tree, id, A), withLowerRow);
+    assert.ok(m.treeLayout(filled).cells.every(({ id }) => id));
+    assert.equal(grip(filled), undefined, "filling all three lower slots keeps the row open");
+    const withEmptyRow = { axis: "rows", ratio: 0.7, a: full, b: null };
+    const folded = m.resizeSplit(withEmptyRow, m.splitLayout(withEmptyRow).handles[0], 1);
+    const restored = m.session({ version: 1, layoutVersion: 3, customLayout: true, channels, dockTree: folded });
+    const handle = grip(restored.dockTree);
+    assert.ok(handle);
+    const opened = m.resizeSplit(restored.dockTree, handle, 0.55);
+    assert.equal(m.validTree(opened, channels), true);
+    assert.deepEqual(m.treeLayout(opened.a).cells, m.treeLayout(full).cells);
+    assert.equal(m.treeLayout(opened.b).cells.length, 3);
+    assert.equal(grip(opened), undefined);
+});
+
 test("main keeps its four-cell size and user resizing survives stream additions and removals", async (t) => {
     const h = setup(t),
         m = h.w.CheeseSpanner.multiviewModel;
@@ -5139,6 +5377,34 @@ test("a muted main slot stays muted across promotion and a newly opened channel"
     );
 });
 
+test("pausing a pending play does not show a retry, while an active playback rejection still does", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const sub = h.w.document.querySelector(`[data-bcmv-channel="${B}"] video`);
+    const overlay = sub.closest(".bcmv-cell").querySelector(".bcmv-error");
+    const state = h.media(sub);
+    state.paused = true;
+    let rejectPlay;
+    sub.play = () => {
+        state.paused = false;
+        return new Promise((_, reject) => (rejectPlay = reject));
+    };
+    sub.pause = () => {
+        state.paused = true;
+    };
+    h.click("toggle-play", B);
+    h.click("toggle-play", B);
+    rejectPlay(new h.w.DOMException("The user paused playback", "AbortError"));
+    await tick();
+    assert.equal(state.paused, true);
+    assert.equal(overlay.hidden, true);
+    h.click("toggle-play", B);
+    rejectPlay(new h.w.DOMException("Playback was blocked", "NotAllowedError"));
+    await tick();
+    assert.equal(overlay.hidden, false);
+});
+
 test("external channel updates stay isolated and a fatal playback failure stops loading", async (t) => {
     const h = setup(t);
     await h.start();
@@ -5576,15 +5842,10 @@ test("multiview requests the shared theme only after it is enabled and keeps the
         h.w.Node.DOCUMENT_POSITION_FOLLOWING,
         "the theme is requested before the multiview style"
     );
-    // README: multiview guides, controls and settings keep the font family CHZZK uses, not the bundled font.
     const css = style.textContent;
-    assert.match(
-        cssRule(css, "[data-bcmv-host],#cheese-spanner-multiview-panel"),
-        /--bcmv-font:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",sans-serif/
-    );
-    assert.match(cssRule(css, "#cheese-spanner-multiview"), /font:12px\/1\.4 var\(--bcmv-font\)/);
-    assert.match(css, /\.bcmv-panel\{[^}]*font:13px\/1\.5 var\(--bcmv-font\)/);
-    assert.doesNotMatch(css, /@font-face|CheeseSpanner Pretendard|--bct-font/);
+    assert.match(cssRule(css, "#cheese-spanner-multiview"), /font-family:inherit/);
+    assert.match(css, /\.bcmv-panel\{[^}]*font:13px\/1\.5 var\(--bct-font\)/);
+    assert.doesNotMatch(css, /@font-face|Pretendard/);
     h.configure(false);
     await tick();
     assert.equal(d.getElementById("cheese-spanner-multiview-style"), null);
@@ -5666,7 +5927,7 @@ test("multiview styles take theme colors, radii, shadow and states from the shar
     assert.match(cssRule(css, `${P} .bcmv-layout-toggle`), /border-radius:var\(--bct-radius-full\)/);
     assert.match(
         cssRule(css, '#cheese-spanner-multiview-chat-settings[aria-expanded="true"]'),
-        /color:var\(--bct-brand-text-base\);background:var\(--bct-brand-weak\)/
+        /color:var\(--bct-text\);background:var\(--bct-brand-weak\)/
     );
     assert.match(cssRule(css, "#cheese-spanner-multiview-chat-settings:hover"), /background:var\(--bct-hover\)/);
     for (const [, value] of css.matchAll(/border-radius:([^;}]*)/g))

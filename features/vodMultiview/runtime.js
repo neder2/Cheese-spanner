@@ -14,6 +14,7 @@
     } = CheeseSpanner.utils;
     const { loadVideo, videoNoFromUrl, searchChannels, loadFollowing, findReplay } = CheeseSpanner.vodMultiviewMetadata;
     const model = CheeseSpanner.multiviewModel;
+    const layoutView = CheeseSpanner.multiviewView;
     const maxAuxiliary = model.MAX_VIEWS - 1;
     const maxRememberedMainVideos = 12;
     const timelinePointWidth = 44;
@@ -50,6 +51,7 @@
         "unknown-time": "방송 시각을 확인할 수 없습니다.",
         restricted: "접근이 제한된 다시보기입니다.",
         unsupported: "이 다시보기의 재생 형식을 지원하지 않습니다.",
+        preparing: "치지직에서 다시보기 재생 준비 중입니다. 잠시 후 다시 시도해 주세요.",
         "lookup-error": "다시보기 정보를 불러오지 못했습니다.",
         "load-error": "보조 영상을 재생하지 못했습니다.",
         "cleanup-error": "이전 영상의 정리가 끝나지 않았습니다. 이 페이지를 새로 열어 주세요.",
@@ -57,7 +59,7 @@
         "search-limit": "검색 범위에서 영상을 찾지 못했습니다. 다시보기 주소로 추가할 수 있습니다.",
         resync: "방송 시각을 맞추지 못했습니다.",
     };
-    const RETRY = new Set(["lookup-error", "load-error"]);
+    const RETRY = new Set(["lookup-error", "load-error", "preparing"]);
     let enabled = false;
     let hidden = false;
     let view = null;
@@ -68,13 +70,15 @@
     let clockEnabled = false;
     const clocks = new Map();
     const rememberedReplays = new Map();
+    let remountState = null;
 
     function installStyles() {
         ensureUiTheme?.();
         injectStyleOnce(
             "cheese-spanner-vod-multiview-style",
             `
-#player_layout[data-bcvm-split]:not(.pip_mode) > .pzp-pc:not(:fullscreen) {
+#player_layout[data-bcvm-split]:not([data-bcvm-viewport], .pip_mode, .miniplayer) { background-color:var(--bct-viewer-bg); }
+#player_layout[data-bcvm-split]:not(.pip_mode, .miniplayer) > .pzp-pc:not(:fullscreen) {
     position:absolute; inset:var(--bcvm-top) auto auto var(--bcvm-left);
     width:var(--bcvm-width) !important; max-width:var(--bcvm-width); height:var(--bcvm-height) !important;
     container:bcvm-main / size;
@@ -100,7 +104,7 @@
 #${LAUNCHER_ID}[aria-pressed="true"] { color:var(--bct-brand); }
 #${CHAT_BUTTON_ID} { display:inline-flex; align-items:center; justify-content:center; flex:none; width:30px; height:30px; margin:0 2px 0 0; padding:0; border:0; border-radius:var(--bct-radius-md); background:transparent; color:var(--bct-text-muted); cursor:pointer; }
 #${CHAT_BUTTON_ID}:hover { color:var(--bct-text); background:var(--bct-hover); }
-#${CHAT_BUTTON_ID}[aria-expanded="true"] { color:var(--bct-brand-text-base); background:var(--bct-brand-weak); }
+#${CHAT_BUTTON_ID}[aria-expanded="true"] { color:var(--bct-text); background:var(--bct-brand-weak); }
 #${CHAT_BUTTON_ID}:focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:-2px; }
 #${CHAT_BUTTON_ID} svg { width:19px; height:19px; pointer-events:none; }
 .pzp-pc:not(.pzp-pc--controls) #${LAUNCHER_ID}:not(:focus-visible) { opacity:0; pointer-events:none; }
@@ -115,7 +119,7 @@
     max-height: min(520px, calc(100dvh - 16px));
     background: var(--bct-surface);
     border: 1px solid var(--bct-border);
-    border-radius: var(--bct-radius-md);
+    border-radius: var(--bct-radius-lg);
     box-shadow: var(--bct-shadow);
     color: var(--bct-text);
     font: 13px/1.4 var(--bct-font);
@@ -144,7 +148,7 @@
 #bcvm-toolbar .bcvm-heading-tools { display:flex; align-items:center; gap:4px; }
 #bcvm-toolbar .bcvm-add-toggle { display:inline-flex; align-items:center; gap:4px; min-height:30px; padding:4px 8px; background:var(--bct-brand); color:var(--bct-on-brand); border-color:transparent; font-weight:700; }
 #bcvm-toolbar .bcvm-add-toggle svg { width:16px; height:16px; }
-#bcvm-toolbar .bcvm-add-toggle:hover { background:var(--bct-brand); filter:brightness(.94); }
+#bcvm-toolbar .bcvm-add-toggle:hover { background:var(--bct-brand-hover); }
 #bcvm-toolbar .bcvm-section { display:grid; gap:8px; min-width:0; padding:12px 0; border-top:1px solid var(--bct-border); }
 #bcvm-toolbar .bcvm-section-title { margin:0; color:var(--bct-text); font:700 12px/1.4 var(--bct-font); }
 #bcvm-toolbar form { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:6px; min-width:0; }
@@ -163,7 +167,7 @@
 }
 #bcvm-toolbar .bcvm-row > span { flex: 1 1 auto; color: var(--bct-text-muted); }
 #bcvm-toolbar a.bcvm-title { color:var(--bct-text); font-weight:700; text-decoration:none; }
-#bcvm-toolbar a.bcvm-title:is(:hover, :focus-visible) { color:var(--bct-brand-text-base); text-decoration:underline; text-underline-offset:3px; }
+#bcvm-toolbar a.bcvm-title:is(:hover, :focus-visible) { color:var(--bct-text); text-decoration:underline; text-underline-offset:3px; }
 #bcvm-toolbar :is(button, input) {
     box-sizing: border-box;
     min-height: 30px;
@@ -178,11 +182,11 @@
 #bcvm-toolbar button { cursor:pointer; }
 #bcvm-toolbar button[type="submit"] { background:var(--bct-brand); border-color:transparent; color:var(--bct-on-brand); font-weight:700; }
 #bcvm-toolbar button:hover { background: var(--bct-hover); }
-#bcvm-toolbar .bcvm-close { display:inline-flex; align-items:center; justify-content:center; flex:none; width:30px; height:30px; padding:5px; border:0; background:transparent; color:var(--bct-text-muted); }
+#bcvm-toolbar .bcvm-close { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; padding:4px; border:0; background:transparent; color:var(--bct-text-muted); }
 #bcvm-toolbar .bcvm-close:hover { background:var(--bct-hover); color:var(--bct-text); }
 #bcvm-toolbar .bcvm-close svg { width:18px; height:18px; pointer-events:none; }
-#bcvm-toolbar button[type="submit"]:hover { background:var(--bct-brand); filter:brightness(.94); }
-#bcvm-toolbar button[aria-pressed="true"] { background:var(--bct-brand); color:var(--bct-on-brand); }
+#bcvm-toolbar button[type="submit"]:hover { background:var(--bct-brand-hover); }
+#bcvm-toolbar button[aria-pressed="true"] { background:var(--bct-brand-weak); color:var(--bct-text); border-color:var(--bct-brand-border); }
 #bcvm-toolbar :is(button, input, a):focus-visible, #${LAUNCHER_ID}:focus-visible, #${PANEL_ID} :is(.bcvm-divider, .bcvm-grip, .bcvm-corner, .bcvm-tile-close):focus-visible {
     outline: 2px solid var(--bct-focus-ring);
     outline-offset: 1px;
@@ -190,12 +194,15 @@
 #bcvm-toolbar :is(.bcvm-results, .bcvm-list) { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
 #bcvm-toolbar .bcvm-following-list { box-sizing:border-box; max-height:240px; overflow:auto; overscroll-behavior:contain; padding:3px; }
 #bcvm-toolbar .bcvm-list { gap:0; }
-#bcvm-toolbar .bcvm-entry { position:relative; min-width:0; padding:12px 0; }
-#bcvm-toolbar .bcvm-entry + .bcvm-entry { border-top:1px solid var(--bct-border); }
+#bcvm-toolbar .bcvm-list > li { position:relative; min-width:0; padding:12px 0; }
+#bcvm-toolbar .bcvm-list > li + li { border-top:1px solid var(--bct-border); }
 #bcvm-toolbar .bcvm-entry-heading { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; }
-#bcvm-toolbar .bcvm-entry-copy { display:grid; gap:4px; min-width:0; }
-#bcvm-toolbar .bcvm-channel { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--bct-text-muted); font-size:12px; line-height:1.5; }
-#bcvm-toolbar .bcvm-entry .bcvm-title { display:block; white-space:nowrap; line-height:1.5; font-weight:600; }
+#bcvm-toolbar .bcvm-entry-copy { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:baseline; gap:2px 8px; min-width:0; }
+#bcvm-toolbar .bcvm-role { color:var(--bct-text-muted); font-size:12px; white-space:nowrap; }
+#bcvm-toolbar .bcvm-main-entry .bcvm-role { color:var(--bct-brand-text); }
+#bcvm-toolbar .bcvm-channel { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--bct-text); font-weight:600; }
+#bcvm-toolbar .bcvm-list .bcvm-title { grid-column:2; color:var(--bct-text-muted); font-size:12px; font-weight:400; line-height:1.5; }
+#bcvm-toolbar .bcvm-channel[hidden] + .bcvm-title { color:var(--bct-text); font:inherit; font-weight:600; }
 #bcvm-toolbar .bcvm-entry-actions { display:flex; align-items:center; gap:2px; }
 #bcvm-toolbar :is(.bcvm-remove,.bcvm-sync) { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; min-height:28px; margin:0; padding:0; border:0; background:transparent; color:var(--bct-text-body); }
 #bcvm-toolbar :is(.bcvm-remove,.bcvm-sync):hover { background:var(--bct-hover); color:var(--bct-text); }
@@ -203,14 +210,21 @@
 #bcvm-toolbar .bcvm-sync[data-retry="true"] { color:var(--bct-danger); }
 #bcvm-toolbar .bcvm-sync[aria-disabled="true"] { color:var(--bct-text-muted); cursor:default; }
 #bcvm-toolbar .bcvm-sync svg { width:17px; height:17px; pointer-events:none; }
+#bcvm-toolbar .bcvm-remove { width:24px; height:24px; min-height:24px; color:var(--bct-danger); opacity:.8; }
+#bcvm-toolbar .bcvm-remove:hover { background:color-mix(in srgb,var(--bct-danger) 12%,transparent); color:var(--bct-danger); opacity:1; }
 #bcvm-toolbar .bcvm-remove svg { width:16px; height:16px; pointer-events:none; }
+#bcvm-toolbar .bcvm-equalize { display:inline-flex; align-items:center; justify-content:center; gap:4px; min-height:32px; padding:4px 8px; border:0; background:var(--bct-surface-weak); font-size:12px; font-weight:500; }
+#bcvm-toolbar .bcvm-equalize:not(:disabled):hover { background:var(--bct-hover); }
+#bcvm-toolbar .bcvm-equalize svg { flex:none; width:14px; height:14px; color:var(--bct-brand-text); pointer-events:none; }
+#bcvm-toolbar .bcvm-equalize:disabled { cursor:default; color:var(--bct-text-muted); opacity:.65; }
+#bcvm-toolbar .bcvm-equalize:disabled svg { color:inherit; }
 #bcvm-toolbar .bcvm-entry-status { position:absolute; width:1px; height:1px; padding:0; margin:-1px; border:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 #bcvm-toolbar .bcvm-entry:has(.bcvm-sync:is(:hover,:focus-visible)) .bcvm-entry-status { z-index:8; inset-inline-end:0; top:calc(100% - 4px); width:max-content; max-width:min(260px,calc(100vw - 64px)); height:auto; margin:0; padding:8px 10px; border:1px solid var(--bct-border); border-radius:var(--bct-radius-sm); background:var(--bct-surface); color:var(--bct-text); box-shadow:var(--bct-shadow); font-size:12px; line-height:1.5; white-space:normal; clip-path:none; pointer-events:none; }
 #bcvm-toolbar .bcvm-help, #bcvm-toolbar .bcvm-empty { margin:0; color:var(--bct-text-muted); font-size:12px; line-height:1.6; }
 #bcvm-toolbar .bcvm-empty { padding:16px 10px; border:1px dashed var(--bct-border-strong); border-radius:var(--bct-radius-md); text-align:center; }
 #bcvm-toolbar .bcvm-notice { padding:8px 10px; background:var(--bct-surface-weak); border-radius:var(--bct-radius-sm); color:var(--bct-text-muted); font-size:12px; line-height:1.5; }
 #bcvm-toolbar :is(.bcvm-notice, .bcvm-results, .bcvm-list):empty,
-#bcvm-toolbar .bcvm-list:not(:empty) + .bcvm-empty { display:none; }
+#bcvm-toolbar .bcvm-list:has(.bcvm-entry) + .bcvm-empty { display:none; }
 #bcvm-toolbar .bcvm-results button { display:flex; align-items:center; gap:8px; width:100%; text-align:start; }
 #bcvm-toolbar .bcvm-results button span { min-width:0; overflow-wrap:anywhere; }
 #bcvm-toolbar .bcvm-results img { width:24px; height:24px; border-radius:50%; object-fit:cover; }
@@ -288,7 +302,7 @@
 #${PANEL_ID} a.bcvm-grip { box-sizing:border-box; text-decoration:none; }
 #${PANEL_ID} a.bcvm-grip:is(:hover, :focus-visible) { text-decoration:underline; text-underline-offset:3px; }
 #${PANEL_ID} .bcvm-screen > .bcvm-grip { max-inline-size:calc(100% - 82px); }
-#${PANEL_ID} .bcvm-tile-close { display:inline-flex; align-items:center; justify-content:center; inset-block-start:6px; inset-inline-end:22px; width:30px; height:30px; padding:5px; box-sizing:border-box; border-radius:var(--bct-radius-sm); background:#000b; cursor:pointer; }
+#${PANEL_ID} .bcvm-tile-close { display:inline-flex; align-items:center; justify-content:center; inset-block-start:6px; inset-inline-end:22px; width:28px; height:28px; padding:4px; box-sizing:border-box; border-radius:var(--bct-radius-sm); background:#000b; cursor:pointer; }
 #${PANEL_ID} .bcvm-tile-close:hover { background:#000e; }
 #${PANEL_ID} .bcvm-tile-close svg { width:18px; height:18px; pointer-events:none; }
 #${PANEL_ID} .bcvm-corner { inline-size:20px; block-size:20px; padding:0; background:transparent; }
@@ -342,14 +356,15 @@
 #${PANEL_ID} .bcvm-message { position:absolute; inset:0; display:grid; place-items:center; margin:0; padding:12px; color:#fff; text-align:center; font:13px/1.4 var(--bct-font); pointer-events:none; }
 #${PANEL_ID} .bcvm-screen:has(> .pzp-pc):not([data-unavailable="1"]) .bcvm-message { display:none; }
 #${PANEL_ID} .bcvm-divider { position:absolute; z-index:1; width:12px; padding:0; border:0; background:transparent; cursor:col-resize; transform:translateX(-50%); pointer-events:auto; touch-action:none; }
-#${PANEL_ID} .bcvm-divider::before { content:""; position:absolute; inset:0 5px; background:var(--bct-border-strong); pointer-events:none; }
+#${PANEL_ID} .bcvm-divider::before { content:""; position:absolute; inset:0 5px; pointer-events:none; }
 #${PANEL_ID} .bcvm-divider:is(:hover, :focus-visible, [data-dragging])::before { background:var(--bct-brand); }
 #${PANEL_ID} .bcvm-divider[aria-orientation="horizontal"] { height:12px; transform:translateY(-50%); cursor:row-resize; }
 #${PANEL_ID} .bcvm-divider[aria-orientation="horizontal"]::before { inset:5px 0; }
+${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom"]`)}
 #${PANEL_ID} .bcvm-screen:not([data-bcvm-sync="false"]) :is(.pzp-pc__progress-slider, .pzp-setting-intro-playbackrate, .pzp-pc__setting-playbackrate-pane) {
     display: none !important;
 }
-#player_layout.pip_mode :is(#${PANEL_ID}, #${LAUNCHER_ID}) { display:none !important; }
+#player_layout:is(.pip_mode, .miniplayer) :is(#${PANEL_ID}, #${LAUNCHER_ID}) { display:none !important; }
 `
         );
     }
@@ -400,10 +415,12 @@
         if (retry) entry.sync.removeAttribute("aria-checked");
         else entry.sync.setAttribute("aria-checked", String(entry.syncEnabled));
         const name = entry.channel.textContent || `다시보기 ${entry.no}`;
-        entry.sync.setAttribute("aria-label", `${name} ${retry ? "다시 시도" : "동기화"}`);
-        entry.sync.title = retry
-            ? `${text}\n눌러서 다시 시도`
-            : `동기화 ${entry.syncEnabled ? "켜짐" : "꺼짐"}\n${text}`;
+        const action = retry ? "다시 시도" : "동기화";
+        entry.sync.setAttribute("aria-label", `${name} ${action}`);
+        entry.sync.title = retry ? `${text}\n${action}` : `동기화 ${entry.syncEnabled ? "켜짐" : "꺼짐"}\n${text}`;
+        if (status !== "resync" && document.activeElement === entry.resync) entry.sync.focus({ preventScroll: true });
+        entry.resync.hidden = status !== "resync";
+        if (!entry.resync.hidden) entry.resync.setAttribute("aria-label", `${name} 다시 맞추기`);
         entry.screen.dataset.bcvmSync = String(entry.syncEnabled);
         entry.screen.dataset.unavailable = ["out-of-range", "unknown-time", "main-ended"].includes(status) ? "1" : "0";
     }
@@ -436,7 +453,7 @@
     }
 
     function clearAll(current) {
-        current.running = false;
+        setRunning(current, false);
         cancelLookup(current);
         clearFollowing(current);
         current.restore?.abort();
@@ -458,8 +475,56 @@
         );
     }
 
+    function createListEntry(no, main = false) {
+        const row = element("li", main ? "bcvm-main-entry" : "bcvm-entry");
+        const heading = element("div", "bcvm-row bcvm-entry-heading");
+        const copy = element("div", "bcvm-entry-copy");
+        const role = element("span", "bcvm-role", main ? "메인" : "");
+        const channel = element("span", "bcvm-channel");
+        channel.hidden = true;
+        const title = element(main ? "span" : "a", "bcvm-title", `다시보기 ${no}`);
+        if (!main) {
+            title.href = `https://chzzk.naver.com/video/${no}`;
+            title.title = "다시보기로 이동";
+        }
+        copy.append(role, channel, title);
+        heading.append(copy);
+        row.append(heading);
+        return { row, heading, role, channel, title };
+    }
+
+    function setListInfo(entry, info) {
+        if (info.title) {
+            entry.title.textContent = info.title;
+            entry.title.title = info.title;
+        }
+        entry.channel.textContent = info.channelName || "";
+        entry.channel.title = info.channelName || "";
+        entry.channel.hidden = !info.channelName;
+    }
+
+    function setMainInfo(current, main) {
+        if (main === current.mainInfo) return;
+        current.mainInfo = main;
+        setListInfo(current.mainEntry, main);
+    }
+
+    function showMainPageTitle(current) {
+        if (current.mainInfo) return;
+        const pageUrl = document.head.querySelector('meta[property="og:url"]')?.content;
+        if (videoNoFromUrl(pageUrl) !== current.mainId) return;
+        const label = document.head.querySelector('meta[property="og:title"]')?.content.trim();
+        if (!label) return;
+        // The native page joins the channel and video title. Keep ambiguous names intact until detail arrives.
+        const parts = label.split(" - ");
+        setListInfo(
+            current.mainEntry,
+            parts.length === 2 ? { channelName: parts[0], title: parts[1] } : { title: label }
+        );
+    }
+
     function selectSub(current, subNo) {
-        current.running = true;
+        setRunning(current, true);
         const used = new Set([...current.entries.values()].map((entry) => entry.index));
         const index = Array.from({ length: maxAuxiliary }, (_, n) => n).find((n) => !used.has(n));
         const screen = element("div", "bcvm-screen");
@@ -468,30 +533,21 @@
         const message = element("p", "bcvm-message");
         message.setAttribute("aria-hidden", "true");
         screen.append(message);
-        const row = element("li", "bcvm-entry");
-        const heading = element("div", "bcvm-row bcvm-entry-heading");
-        const title = element("a", "bcvm-title", `보조 다시보기 ${subNo}`);
-        title.href = `https://chzzk.naver.com/video/${subNo}`;
-        title.title = "다시보기로 이동";
-        const channel = element("span", "bcvm-channel");
-        channel.hidden = true;
         const status = element("span", "bcvm-entry-status");
         status.id = `${PANEL_ID}-status-${subNo}`;
         status.setAttribute("role", "status");
         const entry = {
+            ...createListEntry(subNo),
             no: subNo,
             index,
-            row,
             screen,
             message,
-            title,
-            channel,
             status,
             request: 0,
             syncEnabled: true,
             syncAvailable: false,
         };
-        entry.tile = createTile(screen, subNo, `보조 다시보기 ${subNo}`, title.href);
+        entry.tile = createTile(screen, subNo, `보조 다시보기 ${subNo}`, entry.title.href);
         const removeEntry = () => {
             if (view !== current || current.entries.get(subNo) !== entry) return;
             const remembered = rememberedReplays.get(current.mainId);
@@ -505,7 +561,7 @@
         remove.setAttribute("aria-label", `다시보기 ${subNo} 빼기`);
         remove.title = "영상 빼기";
         remove.className = "bcvm-remove";
-        remove.append(CheeseSpanner.multiviewView.panelIcon("close"));
+        remove.append(CheeseSpanner.multiviewView.panelIcon("remove"));
         const close = (entry.tile.close = button("", removeEntry));
         close.className = "bcvm-tile-close";
         close.title = "영상 빼기";
@@ -530,15 +586,19 @@
         });
         entry.sync.className = "bcvm-sync";
         entry.sync.setAttribute("aria-describedby", status.id);
-        const copy = element("div", "bcvm-entry-copy");
-        copy.append(title, channel);
+        entry.resync = button("다시 맞추기", () => {
+            if (view === current && current.entries.get(subNo) === entry && entry.state === "resync" && entry.request)
+                send(current.panel, { action: "resync", request: entry.request });
+        });
+        entry.resync.className = "bcvm-resync";
+        entry.resync.setAttribute("aria-describedby", status.id);
         const actions = element("div", "bcvm-entry-actions");
-        actions.append(entry.sync, remove);
-        heading.append(copy, actions);
-        row.append(heading, status);
+        actions.append(entry.resync, entry.sync, remove);
+        entry.heading.append(actions);
+        entry.row.append(status);
         current.entries.set(subNo, entry);
         current.results.replaceChildren();
-        current.list.append(row);
+        current.list.append(entry.row);
         current.panel.append(screen);
         updateStatus(entry, "loading");
         refreshLayout(current, "add", subNo);
@@ -547,11 +607,7 @@
     }
 
     function startSub(current, entry, main, sub) {
-        if (sub.title) entry.title.textContent = sub.title;
-        entry.title.title = sub.title || "다시보기로 이동";
-        entry.channel.textContent = sub.channelName || "";
-        entry.channel.title = sub.channelName || "";
-        entry.channel.hidden = !sub.channelName;
+        setListInfo(entry, sub);
         if (sub.channelName || sub.title) labelTile(entry.tile, sub.channelName || sub.title);
         if (main.status !== "ok" || sub.status !== "ok") {
             const status = main.status !== "ok" ? main.status : sub.status;
@@ -561,9 +617,13 @@
         }
         if (
             main.media.id === sub.media.id ||
-            [...current.entries.values()].some((item) => item.info?.media.id === sub.media.id)
+            [...current.entries.values()].some((item) => item !== entry && item.info?.media.id === sub.media.id)
         ) {
-            updateStatus(entry, "", "이미 화면에 있는 다시보기입니다.");
+            const remembered = rememberedReplays.get(current.mainId);
+            remembered?.delete(entry.no);
+            if (remembered?.size === 0) rememberedReplays.delete(current.mainId);
+            removeSub(current, entry);
+            current.notice.textContent = "이미 화면에 있는 다시보기입니다.";
             return;
         }
         entry.info = {
@@ -637,7 +697,7 @@
                 loadVideo(subNo, { signal, needsKey: true }),
             ]);
             if (!ownsEntry()) return;
-            if (main.status === "ok") current.mainInfo = main;
+            if (main.status === "ok") setMainInfo(current, main);
             startSub(current, entry, main, sub);
         } catch {
             if (ownsEntry()) updateStatus(entry, "lookup-error");
@@ -647,28 +707,43 @@
         }
     }
 
-    async function restoreReplays(current) {
-        const saved = rememberedReplays.get(current.mainId);
-        if (!saved?.size || current.entries.size) return;
+    async function restoreReplays(current, saved = rememberedReplays.get(current.mainId)) {
+        if (!saved || current.entries.size) return;
+        const numbers = [...saved].slice(0, maxAuxiliary);
+        if (!numbers.length) return;
         const restore = (current.restore = new AbortController());
         const main = current.mainInfo || loadVideo(current.mainId, { signal: restore.signal });
-        const entries = [...saved].map((no) => selectSub(current, no));
+        const entries = numbers.map((no) => selectSub(current, no));
         await Promise.all(entries.map((entry) => loadSub(current, entry, main)));
         if (current.restore === restore) current.restore = null;
     }
 
-    function reference(current, main) {
-        let at;
+    function readPosition(current) {
+        let position;
         const receive = (event) => {
-            if (Number.isFinite(event.detail)) at = event.detail;
+            const { id, currentTime, duration } = event.detail || {};
+            if (
+                typeof id === "string" &&
+                Number.isFinite(duration) &&
+                duration > 0 &&
+                Number.isFinite(currentTime) &&
+                currentTime >= 0 &&
+                currentTime <= duration
+            )
+                position = { id, currentTime, duration };
         };
         current.panel.addEventListener(REFERENCE, receive);
         try {
-            send(current.panel, { action: "reference", main });
+            send(current.panel, { action: "reference", videoNo: current.mainId });
         } finally {
             current.panel.removeEventListener(REFERENCE, receive);
         }
-        return at;
+        return position;
+    }
+
+    function broadcastTime(main, position) {
+        if (!position || position.id !== main.id || Math.abs(main.duration - position.duration) > 2) return;
+        return main.startMs + Math.min(position.currentTime, main.duration) * 1000;
     }
 
     function timelineTime(at, label) {
@@ -836,8 +911,9 @@
     function updateTimelineCursor(current) {
         if (view !== current || !current.open || !current.timeline.open || document.hidden) return;
         const range = current.timelineRange;
-        const at = current.mainInfo?.media && range ? reference(current, current.mainInfo.media) : undefined;
-        const known = Number.isFinite(at) && at >= range.start && at < range.end;
+        const at =
+            current.mainInfo?.media && range ? broadcastTime(current.mainInfo.media, readPosition(current)) : undefined;
+        const known = Number.isFinite(at) && at >= range.start && at <= range.end;
         const disabled =
             !known ||
             !range.common ||
@@ -948,14 +1024,15 @@
         const mainNo = route;
         current.notice.textContent = `${channel.name}의 다시보기를 확인하고 있습니다.`;
         try {
+            const selectedPosition = readPosition(current);
             const main = current.mainInfo || (await loadVideo(mainNo, { signal }));
             if (!isCurrent(current, pending, mainNo)) return;
             if (main.status !== "ok") {
                 current.notice.textContent = `메인 영상 · ${MESSAGES[main.status]}`;
                 return;
             }
-            current.mainInfo = main;
-            const at = reference(current, main.media);
+            setMainInfo(current, main);
+            const at = broadcastTime(main.media, selectedPosition);
             const sub = await findReplay(channel.id, main.media, { signal, at, excluded: current.entries.keys() });
             if (!isCurrent(current, pending, mainNo)) return;
             if (sub.status !== "ok") {
@@ -965,8 +1042,8 @@
             if (!canAdd(current) || current.entries.has(sub.media.videoNo)) return;
             current.notice.textContent = "";
             const entry = selectSub(current, sub.media.videoNo);
-            startSub(current, entry, main, sub);
             setAddOpen(current, false);
+            startSub(current, entry, main, sub);
         } catch {
             if (isCurrent(current, pending, mainNo)) current.notice.textContent = MESSAGES["lookup-error"];
         } finally {
@@ -1213,13 +1290,14 @@
         for (const node of document.querySelectorAll(`#${CHAT_BUTTON_ID}`)) {
             if (node !== current.chatButton) node.remove();
         }
-        if (!menu) {
+        if (!current.running || !menu) {
             current.chatButton?.remove();
             return;
         }
         if (!current.chatButton) {
             const trigger = (current.chatButton = button("", (event) => {
                 event.stopPropagation();
+                if (view !== current || !current.running) return;
                 setOpen(current, !current.open, trigger);
             }));
             trigger.id = CHAT_BUTTON_ID;
@@ -1236,7 +1314,13 @@
         current.chatButton.disabled = layoutSuspended(current);
     }
 
-    function setOpen(current, open, trigger) {
+    function setRunning(current, running) {
+        if (current.running === running) return;
+        current.running = running;
+        syncChatButton(current);
+    }
+
+    function setOpen(current, open, trigger, { focus = true } = {}) {
         if (open && layoutSuspended(current)) return;
         if (trigger) current.toolbarTrigger = trigger;
         current.open = open;
@@ -1245,6 +1329,7 @@
         current.chatButton?.setAttribute("aria-expanded", String(open));
         refreshTimeline(current);
         if (open) {
+            showMainPageTitle(current);
             positionToolbar(current);
         } else {
             setAddOpen(current, false, false);
@@ -1253,10 +1338,12 @@
             clearFollowing(current);
             current.notice.textContent = "";
         }
-        const returnFocus = current.toolbarTrigger?.isConnected ? current.toolbarTrigger : current.launcher;
-        (open ? current.addToggle : returnFocus).focus({
-            preventScroll: !open || current.toolbar.dataset.placement === "sidebar",
-        });
+        if (focus) {
+            const returnFocus = current.toolbarTrigger?.isConnected ? current.toolbarTrigger : current.launcher;
+            (open ? current.addToggle : returnFocus).focus({
+                preventScroll: !open || current.toolbar.dataset.placement === "sidebar",
+            });
+        }
     }
 
     function toggleMultiview(current) {
@@ -1267,7 +1354,7 @@
             setOpen(current, false, current.launcher);
             return;
         }
-        current.running = true;
+        setRunning(current, true);
         drawLayout(current);
         setOpen(current, true, current.launcher);
         void restoreReplays(current);
@@ -1327,7 +1414,7 @@
     }
 
     function layoutSuspended(current) {
-        return Boolean(document.fullscreenElement || current.host.classList.contains("pip_mode"));
+        return Boolean(document.fullscreenElement || current.host.matches(".pip_mode, .miniplayer"));
     }
 
     function closeViewport(current) {
@@ -1385,7 +1472,7 @@
         const bounds = current.host.getBoundingClientRect();
         if (!bounds.width || !bounds.height) return tiled;
         for (const { id, rect } of tiled) {
-            if (current.windows.has(id)) continue;
+            if (!id || current.windows.has(id)) continue;
             const dock = dockBounds(current);
             const player = id === current.mainId ? current.root : tileFor(current, id).node;
             const video = player.querySelector("video.webplayer-internal-video");
@@ -1412,45 +1499,34 @@
     }
 
     function syncPanelOrder(current) {
-        const cells = model.treeLayout(current.tree).cells.filter(({ id }) => current.entries.has(id));
-        cells.sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0]);
-        let next = current.list.firstElementChild;
-        for (const { id } of cells) {
-            const row = current.entries.get(id).row;
+        const cells = model.orderedCells(current.cells, current.mainId);
+        const focused = current.list.contains(document.activeElement) ? document.activeElement : null;
+        let next = current.mainEntry.row.nextElementSibling;
+        for (const [index, { id }] of cells.entries()) {
+            if (id === current.mainId) continue;
+            const { row, role } = current.entries.get(id);
+            const label = `서브 ${index}`;
+            if (role.textContent !== label) role.textContent = label;
             if (row !== next) current.list.insertBefore(row, next);
             next = row.nextElementSibling;
         }
-    }
-
-    function isCompact(current) {
-        const { width } = dockBounds(current);
-        return width > 0 && width < 760;
+        if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true });
     }
 
     function refreshLayout(current, change, id) {
         endGesture(current, false);
-        const compact = isCompact(current);
         const subs = [...current.entries.keys()];
         const { mainId } = current;
-        const ids = [mainId, ...subs];
-        const keep = Boolean(change && subs.length && current.customLayout && current.compact === compact);
-        current.compact = compact;
-        current.customLayout = keep;
-        if (keep) {
+        current.customLayout = Boolean(change && subs.length && current.customLayout);
+        if (current.customLayout) {
             current.tree =
                 change === "add" ? model.addTree(current.tree, id, mainId) : model.removeTree(current.tree, id);
-        } else if (compact && subs.length > 0 && subs.length <= 2) {
-            const bottom = subs.length === 1 ? subs[0] : { axis: "columns", ratio: 0.5, a: subs[0], b: subs[1] };
-            current.tree = { axis: "rows", ratio: 0.5, a: mainId, b: bottom };
-        } else if (subs.length === 1) {
-            current.tree = { axis: "columns", ratio: 0.5, a: mainId, b: subs[0] };
         } else {
-            current.tree = model.removeTree(model.defaultTree(ids.map((id) => ({ id }))), null);
+            current.tree = model.defaultTree([mainId, ...subs].map((id) => ({ id })));
         }
         for (const divider of current.dividers.values()) divider.remove();
         current.dividers.clear();
         drawLayout(current);
-        syncPanelOrder(current);
     }
 
     function drawLayout(current) {
@@ -1468,11 +1544,21 @@
         if (current.chatButton) current.chatButton.disabled = suspended;
         current.freeToggle.setAttribute("aria-pressed", String(current.free));
         current.freeToggle.disabled = suspended;
+        if (!current.drag) {
+            current.equalize.disabled =
+                suspended || current.free || !model.equalizeAuxiliaries(current.tree, current.mainId);
+            current.equalize.title = current.free
+                ? "자유 배치 해제 시 분할 영역별 정렬 가능"
+                : current.equalize.disabled
+                  ? "같은 영역에 보조 영상 2개 이상일 때 사용 가능"
+                  : "메인 영역 유지, 보조 영역 영상들을 동일 크기로 정렬";
+        }
         host.toggleAttribute("data-bcvm-split", active);
         host.toggleAttribute("data-bcvm-motion", active && !viewport && !suspended && !current.drag?.handle);
         if (!viewport) host.style.removeProperty("--bcvm-main-layer");
-        current.layout = model.treeLayout(current.drag?.previewTree || current.tree);
+        current.layout = model.splitLayout(current.drag?.previewTree || current.tree);
         current.cells = viewport ? freeCells(current, current.layout.cells) : current.layout.cells;
+        if (!current.drag) syncPanelOrder(current);
         if (!active) {
             for (const name of dimensions) host.style.removeProperty(`--bcvm-${name}`);
             return;
@@ -1498,19 +1584,8 @@
         const visibleDividers = new Set(handles.map(({ key }) => key));
         for (const [key, divider] of current.dividers) divider.toggleAttribute("hidden", !visibleDividers.has(key));
         for (const handle of handles) {
-            const { key, axis, value, position, start, length, lower, upper } = handle;
-            const divider = current.dividers.get(key) || bindDivider(current, key);
-            const vertical = axis === "columns";
-            Object.assign(divider.style, {
-                left: percent(vertical ? position : start),
-                top: percent(vertical ? start : position),
-                width: vertical ? "" : percent(length),
-                height: vertical ? percent(length) : "",
-            });
-            divider.setAttribute("aria-orientation", vertical ? "vertical" : "horizontal");
-            divider.setAttribute("aria-valuemin", String(Math.round(lower * 100)));
-            divider.setAttribute("aria-valuemax", String(Math.round(upper * 100)));
-            divider.setAttribute("aria-valuenow", String(Math.round(value * 100)));
+            const divider = current.dividers.get(handle.key) || bindDivider(current, handle.key);
+            layoutView.drawDivider(divider, handle);
         }
         const drop = current.drag?.drop;
         current.preview.hidden = !drop;
@@ -1521,14 +1596,18 @@
     }
 
     function bindDivider(current, key) {
-        const divider = button("");
+        const divider = key === "bottom" ? element("div") : button("");
         divider.className = "bcvm-divider";
         divider.dataset.bcvmDivider = key;
         divider.setAttribute("role", "separator");
-        divider.setAttribute("aria-label", "영상 크기 조절");
         const getHandle = () => current.layout.handles.find((item) => item.key === key);
+        divider.addEventListener("dblclick", () => resizeDivider(current, getHandle(), 0.5));
+        current.dividers.set(key, divider);
+        current.panel.append(divider);
+        if (key === "bottom") return divider;
         divider.addEventListener("keydown", (event) => {
             const handle = getHandle();
+            if (!handle || divider.hidden) return;
             const keys = handle.axis === "columns" ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"];
             const next =
                 event.key === keys[0]
@@ -1540,30 +1619,37 @@
                         : NaN;
             if (!Number.isFinite(next)) return;
             event.preventDefault();
-            resizeDivider(current, handle, next);
+            resizeDivider(current, handle, Math.min(next, handle.upper));
         });
-        divider.addEventListener("dblclick", () => resizeDivider(current, getHandle(), 0.5));
-        current.dividers.set(key, divider);
-        current.panel.append(divider);
         return divider;
     }
 
     function resizeDivider(current, handle, ratio) {
-        const value = Math.max(handle.lower, Math.min(handle.upper, ratio));
-        current.tree = model.resizeTree(current.tree, handle.key, value);
+        if (!handle) return;
+        current.tree = model.resizeSplit(current.tree, handle, ratio);
         current.customLayout = true;
         drawLayout(current);
     }
 
-    function dockTile(current, tree, source, target, side) {
-        if (side === "center" && (source === current.mainId || target === current.mainId)) {
+    function dockTile(current, tree, source, target, side, path) {
+        if (target && side === "center" && (source === current.mainId || target === current.mainId)) {
             // Reorder the boxes even when one is the native main. The route still owns playback and chat.
             return model.mapTree(tree, (id) => (id === source ? target : id === target ? source : id));
         }
-        return model.dockTree(tree, source, target, side, current.mainId);
+        return model.dockTree(tree, source, target, target === null ? "fill" : side, current.mainId, path);
     }
 
     function findDrop(drag, x, y) {
+        const row = model.bottomRowDrop(
+            drag.tree,
+            drag.cells,
+            drag.tile.id,
+            drag.bounds,
+            drag.drop?.side === "bottom-row",
+            x,
+            y
+        );
+        if (row) return { ...row, label: "하단에 배치" };
         const px = (x - drag.bounds.left) / drag.bounds.width;
         const py = (y - drag.bounds.top) / drag.bounds.height;
         const cell = drag.cells.find(
@@ -1580,7 +1666,7 @@
             ["bottom", 1 - ry],
         ];
         const [edge, distance] = edges.reduce((near, next) => (next[1] < near[1] ? next : near));
-        const side = distance < 0.25 ? edge : "center";
+        const side = cell.id && distance < 0.25 ? edge : "center";
         const labels = {
             left: "왼쪽에 배치",
             right: "오른쪽에 배치",
@@ -1588,7 +1674,7 @@
             bottom: "아래에 배치",
             center: "이 위치로 이동",
         };
-        return { id: cell.id, side, label: labels[side] };
+        return { id: cell.id, path: cell.path, side, label: labels[side] };
     }
 
     function raiseTile(current, tile) {
@@ -1666,7 +1752,7 @@
         }
         if (current.drag?.control) {
             event.preventDefault();
-            current.drag.control.focus({ preventScroll: true });
+            if (handle?.key !== "bottom") current.drag.control.focus({ preventScroll: true });
         }
         if (current.drag?.started) current.drag.control.setAttribute("data-dragging", "");
     }
@@ -1689,7 +1775,7 @@
             const raw = drag.handle.value + (vertical ? dx : dy) / span;
             const result = model.snapRatio(drag.handle, raw, span, drag.locked, drag.handle.value);
             drag.locked = result.locked;
-            drag.previewTree = model.resizeTree(drag.tree, drag.handle.key, result.value);
+            drag.previewTree = model.resizeSplit(drag.tree, drag.handle, result.value);
         } else if (drag.free) {
             const x = dx / drag.bounds.width;
             const y = dy / drag.bounds.height;
@@ -1698,9 +1784,11 @@
                 : model.moveWindow(drag.rect, x, y);
         } else {
             const drop = findDrop(drag, event.clientX, event.clientY);
-            if (started && drop?.id === drag.drop?.id && drop?.side === drag.drop?.side) return;
+            if (started && drop?.path === drag.drop?.path && drop?.side === drag.drop?.side) return;
             drag.drop = drop;
-            drag.previewTree = drop ? dockTile(current, drag.tree, drag.tile.id, drop.id, drop.side) : null;
+            drag.previewTree = drop
+                ? drop.tree || dockTile(current, drag.tree, drag.tile.id, drop.id, drop.side, drop.path)
+                : null;
         }
         drawLayout(current);
     }
@@ -1715,7 +1803,6 @@
         if (drag.previewTree) {
             current.tree = drag.previewTree;
             current.customLayout = true;
-            syncPanelOrder(current);
         }
         if (drag.previewRect) current.windows.get(drag.tile.id).rect = drag.previewRect;
     }
@@ -1758,9 +1845,8 @@
                 distance = delta;
             }
             if (!nearest) return;
-            current.tree = dockTile(current, current.tree, tile.id, nearest.id, "center");
+            current.tree = dockTile(current, current.tree, tile.id, nearest.id, "center", nearest.path);
             current.customLayout = true;
-            syncPanelOrder(current);
         }
         drawLayout(current);
     }
@@ -1886,6 +1972,8 @@
         const launcher = (current.launcher = button("", (event) => {
             event.stopPropagation();
             toggleMultiview(current);
+            // A later seek key must not reveal a focus ring left by a pointer click.
+            if (event.detail > 0) launcher.blur();
         }));
         launcher.id = LAUNCHER_ID;
         launcher.className = "pzp-button";
@@ -1971,11 +2059,23 @@
         current.freeToggle = button("자유 배치", () => {
             endGesture(current, false);
             current.free = !current.free;
-            if (current.free) current.running = true;
+            if (current.free) setRunning(current, true);
             current.notice.textContent = "";
             drawLayout(current);
         });
-        layoutRow.append(current.freeToggle, reset);
+        current.equalize = button("보조 방송 정렬", () => {
+            if (current.free || layoutSuspended(current)) return;
+            endGesture(current, false);
+            const { width, height } = dockBounds(current);
+            const arranged = model.equalizeAuxiliaries(current.tree, current.mainId, width / height);
+            if (!arranged) return;
+            current.tree = arranged.tree;
+            current.customLayout = true;
+            drawLayout(current);
+        });
+        current.equalize.className = "bcvm-equalize";
+        current.equalize.prepend(CheeseSpanner.multiviewView.panelIcon("align"));
+        layoutRow.append(current.freeToggle, reset, current.equalize);
         layoutSection.append(layoutRow, element("p", "bcvm-help", "영상이나 채널명을 끌어 위치를 바꿀 수 있어요."));
         const form = element("form");
         const input = (current.input = element("input"));
@@ -2021,11 +2121,13 @@
         current.followingList.setAttribute("aria-label", "팔로잉 채널");
         followingPane.append(followingFilter, current.followingStatus, current.followingList);
         current.list = element("ul", "bcvm-list");
-        current.list.setAttribute("aria-label", "추가한 다시보기");
+        current.list.setAttribute("aria-label", "다시보기 배치 목록");
+        current.mainEntry = createListEntry(current.mainId, true);
+        current.list.append(current.mainEntry.row);
         searchPane.append(form, current.results);
-        searchSection.append(addTabs, current.notice, searchPane, followingPane);
-        listSection.append(current.list, element("p", "bcvm-empty", "아직 추가한 영상이 없어요."));
-        toolbar.append(heading, searchSection, createTimeline(current), listSection, layoutSection);
+        searchSection.append(addTabs, searchPane, followingPane);
+        listSection.append(current.list, element("p", "bcvm-empty", "아직 추가한 보조 영상이 없어요."));
+        toolbar.append(heading, current.notice, searchSection, createTimeline(current), listSection, layoutSection);
         panel.addEventListener(STATUS, (event) => {
             if (view !== current || !Object.hasOwn(MESSAGES, event.detail?.status)) return;
             const entry = [...current.entries.values()].find(
@@ -2094,11 +2196,11 @@
             drawLayout(current);
         };
         document.addEventListener("fullscreenchange", displayModeChanged, { signal });
-        let pip = host.classList.contains("pip_mode");
+        let floating = host.matches(".pip_mode, .miniplayer");
         current.mode = new MutationObserver(() => {
-            const next = host.classList.contains("pip_mode");
-            if (next === pip) return;
-            pip = next;
+            const next = host.matches(".pip_mode, .miniplayer");
+            if (next === floating) return;
+            floating = next;
             displayModeChanged();
         });
         current.mode.observe(host, { attributes: true, attributeFilter: ["class"] });
@@ -2121,12 +2223,7 @@
             { signal }
         );
         const resized = () => {
-            const compact = isCompact(current);
-            if (compact !== current.compact && !current.customLayout) refreshLayout(current);
-            else if (current.viewport || current.drag || compact !== current.compact) {
-                current.compact = compact;
-                displayModeChanged();
-            }
+            if (current.viewport || current.drag) displayModeChanged();
             positionToolbar(current);
         };
         if (typeof ResizeObserver === "function") {
@@ -2156,6 +2253,7 @@
     function reconcile() {
         const nextRoute = enabled && !hidden ? videoNoFromUrl(location.href) : "";
         if (route !== nextRoute) {
+            remountState = null;
             unmount();
             observer?.disconnect();
             observer = null;
@@ -2165,7 +2263,10 @@
         const host = document.querySelector(HOST);
         const root = host?.querySelector(":scope > .pzp-pc");
         const reference = launcherReference(root);
-        if (view?.host === host && view.root === root && view.panel.parentElement === host && reference) {
+        if (view?.host === host && view.panel.parentElement === host) {
+            // The native root can disappear for a frame while the host and owned slots stay mounted.
+            if (!root || !reference) return;
+            view.root = root;
             if (view.reference !== reference || view.launcher.parentElement !== reference.parentElement) {
                 view.reference = reference;
                 reference.before(view.launcher);
@@ -2175,8 +2276,19 @@
             syncTimeline(view);
             return;
         }
+        if (view?.running) remountState = { open: view.open, numbers: [...view.entries.keys()] };
         unmount();
-        if (root && reference) mount(host, root, reference);
+        if (root && reference) {
+            mount(host, root, reference);
+            if (remountState) {
+                const state = remountState;
+                remountState = null;
+                setRunning(view, true);
+                drawLayout(view);
+                if (state.open) setOpen(view, true, null, { focus: false });
+                void restoreReplays(view, state.numbers);
+            }
+        }
         if (!observer) {
             observer = createMutationObserverSync({
                 shouldSchedule: (mutations) =>

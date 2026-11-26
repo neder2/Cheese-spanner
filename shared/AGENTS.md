@@ -85,6 +85,12 @@
 
 작은 글자(18px 미만)는 4.5:1을 지켜요. `--bct-text-dim`(다크 3.7:1)과 `--bct-brand-text-base`(라이트 4.1:1)는 큰 글자·비활성·글자가 아닌 표시에만 써요. 라이트의 작은 `--bct-brand-text`·`--bct-danger`는 `--bct-bg`·`--bct-surface` 위에서만 4.5:1을 넘고, 약한 면·기본 면 위에서는 기준에 못 미쳐요.
 
+다시보기 댓글 정렬은 치지직 원본의 선택 글자색 `--bct-text-cool-stronger`, 기본 글자색 `--bct-text-secondary`, 호버 면색 `--bct-overlay-hover`, 구분점 `--bct-separator-dot`을 써요. 이 기본 글자색은 치지직 원본을 재현하는 용도예요.
+
+다시보기 댓글의 재생 시각 배경은 `--bct-brand-weaker`, 첨부 사진 테두리는 `--bct-photo-border`, 사진 뷰어의 배경과 조작 버튼은 각각 `--bct-viewer-bg`와 `--bct-viewer-fg`를 써요.
+
+브랜드 테두리·호버는 `--bct-brand-border`·`--bct-brand-hover`, 방송·녹화 상태 점과 경고는 `--bct-status-live`·`--bct-warning`을 써요. 이미지·합성 모드처럼 색으로 표현할 수 없는 밝은 테마 값은 `@container style(--bct-scheme:light)`로 선택해요. 레이어는 `--bct-z-player-panel`·`--bct-z-popover`·`--bct-z-dialog`·`--bct-z-toast`를 해당 쌓임 맥락에서 사용해요.
+
 회귀는 `tests/ui-theme.test.js`(요청 전 미주입·1회 주입·변수와 글꼴만 선언·원격 URL 없음·표식별 대체값·대비·로드 순서), `tests/release-safety.test.js`(MAIN 제외·isolated 포함), `tests/extension-pages.test.js`의 manifest 순서 검사가 보호해요. 로딩 순서를 바꾸면 전체 검증을 해요.
 
 ## 새 기능 안내 공용부

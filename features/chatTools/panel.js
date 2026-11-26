@@ -133,7 +133,7 @@
 .bcct-moderator-trigger[data-unread="1"]{
   background:var(--bct-brand-weak);
   color:var(--bct-brand-text);
-  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--bct-brand-text) 40%, transparent);
+  box-shadow:inset 0 0 0 1px var(--bct-brand-border);
 }
 .bcct-moderator-actions{
   display:inline-flex!important;
@@ -161,7 +161,7 @@
   position:absolute;
   top:42px;
   right:8px;
-  z-index:2147483646;
+  z-index:var(--bct-z-dialog);
   width:min(344px, calc(100vw - 24px));
   max-height:min(var(--bcct-box-height,420px), calc(100vh - 120px));
   border:1px solid var(--bct-border);
@@ -186,7 +186,7 @@
   border-bottom:1px solid var(--bct-border);
   background:var(--bct-surface);
   font:inherit;
-  font-size:14px;
+  font-size:15px;
   font-weight:700;
 }
 .bcct-moderator-box__heading{
@@ -224,7 +224,7 @@
   height:28px;
   flex:0 0 auto;
   border:0;
-  border-radius:var(--bct-radius-md);
+  border-radius:var(--bct-radius-sm);
   background:transparent;
   color:var(--bct-text-muted);
   cursor:pointer;
@@ -245,6 +245,24 @@
   overflow:auto;
   overscroll-behavior:contain;
   min-height:0;
+}
+.bcct-moderator-unread-divider{
+  display:flex;
+  flex:none;
+  align-items:center;
+  gap:8px;
+  padding:0 12px;
+  color:var(--bct-danger);
+  font-size:11px;
+  font-weight:600;
+  line-height:16px;
+  user-select:none;
+}
+.bcct-moderator-unread-divider::before,
+.bcct-moderator-unread-divider::after{
+  content:"";
+  flex:1;
+  border-top:1px solid currentColor;
 }
 .bcct-moderator-authors{
   display:flex;
@@ -415,6 +433,8 @@
         let moderatorAuthors = null;
         let moderatorSummary = null;
         let moderatorBottomButton = null;
+        let moderatorUnreadDivider = null;
+        let unreadStartRecordId = null;
         let moderatorAuthorFilter = "";
         let moderatorReadFrame = null;
         let moderatorResizeObserver = null;
@@ -460,13 +480,14 @@
             // 치지직 본 채팅창처럼 그 행에 있던 뱃지 아이콘(역할/구독/후원 등)을
             // 순서대로 붙이고, 뱃지가 하나도 없을 때만 역할 라벨 텍스트로 표시한다.
             const badges = (Array.isArray(message.badges) ? message.badges : []).filter((badge) =>
-                /^https:\/\//.test(normSpace(badge?.src))
+                Boolean(root.utils.normalizeChzzkImageUrl(badge?.src))
             );
             if (badges.length) {
                 for (const badge of badges.slice(0, 8)) {
                     const icon = document.createElement("img");
                     icon.className = "bcct-moderator-row__badge";
-                    icon.src = normSpace(badge.src);
+                    icon.referrerPolicy = "no-referrer";
+                    icon.src = root.utils.normalizeChzzkImageUrl(badge.src);
                     icon.alt = normSpace(badge.alt) || roleLabel(message.role);
                     icon.width = 18;
                     icon.height = 18;
@@ -514,6 +535,10 @@
         function getModeratorAuthorKey(message) {
             // 현재 DOM에서 확인한 닉네임으로만 묶는다. 이름 없는 행을 같은 사용자로 추정하지 않는다.
             return message.author ? `name:${message.author}` : `message:${message.id}`;
+        }
+
+        function matchesModeratorAuthorFilter(message) {
+            return !moderatorAuthorFilter || getModeratorAuthorKey(message) === moderatorAuthorFilter;
         }
 
         function getModeratorActors() {
@@ -569,10 +594,9 @@
                     badge.setAttribute("aria-hidden", "true");
                     button.append(name, badge);
                     button.addEventListener("click", () => {
+                        if (moderatorAuthorFilter === key) return;
                         moderatorAuthorFilter = key;
-                        renderModeratorList();
-                        scrollModeratorListToBottom();
-                        scheduleModeratorReadCheck();
+                        renderModeratorList({ startReading: true });
                     });
                     moderatorAuthors.appendChild(button);
                 }
@@ -585,17 +609,13 @@
                 if (button.getAttribute("aria-label") !== label) button.setAttribute("aria-label", label);
                 if (button.title !== label) button.title = label;
             }
-            const visibleUnread = moderatorMessages.filter(
-                (message) =>
-                    message.unread &&
-                    (!moderatorAuthorFilter || getModeratorAuthorKey(message) === moderatorAuthorFilter)
-            ).length;
+            const visibleUnread = entries.get(moderatorAuthorFilter).unread;
             syncModeratorText(moderatorSummary, visibleUnread ? `미확인 채팅 ${visibleUnread}개` : "새 채팅 없음");
             for (const { row, message } of moderatorRenderedRows.values()) {
                 const value = message.unread ? "1" : "0";
                 if (row.dataset.unread !== value) row.dataset.unread = value;
             }
-            setModeratorPanelOpen(moderatorPanelOpen);
+            syncModeratorPanelToggle();
         }
 
         function scheduleModeratorReadCheck() {
@@ -646,12 +666,14 @@
             const author = row.querySelector(".bcct-moderator-row__author");
             if (author && message.authorColor) author.style.color = message.authorColor;
             const meta = row.querySelector(".bcct-moderator-row__meta");
-            if (meta && !meta.querySelector("img") && fresh.querySelector(".bcct-moderator-row__badge")) {
-                for (const node of Array.from(meta.childNodes)) {
-                    if (node.nodeType === Node.TEXT_NODE) node.remove();
-                }
-                for (const badge of fresh.querySelectorAll(".bcct-moderator-row__badge")) {
-                    meta.insertBefore(badge, author?.parentNode === meta ? author : null);
+            const freshMeta = fresh.querySelector(".bcct-moderator-row__meta");
+            if (meta && freshMeta && meta.innerHTML !== freshMeta.innerHTML) {
+                if (!author) meta.replaceChildren(...freshMeta.childNodes);
+                else {
+                    for (const node of Array.from(meta.childNodes)) if (node !== author) node.remove();
+                    for (const node of Array.from(freshMeta.childNodes)) {
+                        if (!node.matches?.(".bcct-moderator-row__author")) meta.insertBefore(node, author);
+                    }
                 }
             }
             const nextTime = fresh.querySelector(".bcct-moderator-row__time");
@@ -661,11 +683,32 @@
             else time?.remove();
         }
 
-        function renderModeratorList() {
+        function renderModeratorList({ startReading = false } = {}) {
             if (!moderatorList || !moderatorCount || !moderatorTriggerCount) return;
             const actors = getModeratorActors();
-            if (moderatorAuthorFilter && !actors.has(moderatorAuthorFilter)) moderatorAuthorFilter = "";
-            const stickToBottom = moderatorPanelOpen && !hasModeratorTextSelection() && isModeratorListNearBottom();
+            const filterExpired = moderatorAuthorFilter && !actors.has(moderatorAuthorFilter);
+            if (filterExpired) moderatorAuthorFilter = "";
+            const firstBatch = !moderatorRenderedRows.size && moderatorMessages.length > 0;
+            const moveToReadStart = moderatorPanelOpen && (startReading || filterExpired || firstBatch);
+            const stickToBottom =
+                moderatorPanelOpen &&
+                !moveToReadStart &&
+                !hasModeratorTextSelection() &&
+                isModeratorListNearBottom(unreadStartRecordId === null ? 40 : 2);
+            // 읽음 통지가 다시 렌더해도 이번에 읽기 시작한 경계는 같은 수집 기록에 둔다.
+            if (
+                moveToReadStart ||
+                (unreadStartRecordId !== null &&
+                    !moderatorMessages.some(
+                        (message) => message.recordId === unreadStartRecordId && matchesModeratorAuthorFilter(message)
+                    ))
+            ) {
+                const firstUnread = moderatorMessages.find(
+                    (message) => message.unread && matchesModeratorAuthorFilter(message)
+                );
+                unreadStartRecordId = firstUnread?.recordId ?? null;
+                moderatorUnreadDivider.remove();
+            }
             // 같은 네이티브 ID로 다시 만들어진 수집 기록도 별도 행이다. 외형 백필은
             // 같은 기록에서만 반영해 본문 선택을 보존하고, 교체된 기록은 새 DOM을 만든다.
             const nextMessages = new Set(moderatorMessages.map((message) => message.recordId));
@@ -675,22 +718,28 @@
                 moderatorRenderedRows.delete(id);
             }
             let changed = false;
+            let nextNode = moderatorList.firstElementChild;
+            function placeInOrder(node) {
+                if (node !== nextNode) {
+                    moderatorList.insertBefore(node, nextNode);
+                    changed = true;
+                }
+                nextNode = node.nextElementSibling;
+            }
             for (const message of moderatorMessages) {
                 const key = getModeratorRenderKey(message);
                 let entry = moderatorRenderedRows.get(message.id);
                 if (!entry) {
                     entry = { row: buildModeratorRow(message), message, key };
                     moderatorRenderedRows.set(message.id, entry);
-                    moderatorList.appendChild(entry.row);
-                    changed = true;
                 } else if (entry.key !== key) {
                     updateModeratorRowAppearance(entry.row, message);
                     entry.key = key;
                 }
                 entry.message = message;
-                const hidden = Boolean(
-                    moderatorAuthorFilter && getModeratorAuthorKey(message) !== moderatorAuthorFilter
-                );
+                if (message.recordId === unreadStartRecordId) placeInOrder(moderatorUnreadDivider);
+                placeInOrder(entry.row);
+                const hidden = !matchesModeratorAuthorFilter(message);
                 if (entry.row.hidden !== hidden) {
                     entry.row.hidden = hidden;
                     changed = true;
@@ -704,11 +753,15 @@
                 moderatorList.appendChild(empty);
             } else if (moderatorMessages.length) empty?.remove();
             renderModeratorActivity(actors);
-            if (changed && stickToBottom) scrollModeratorListToBottom();
+            if (moveToReadStart && unreadStartRecordId !== null) {
+                moderatorList.scrollTop +=
+                    moderatorUnreadDivider.getBoundingClientRect().top - moderatorList.getBoundingClientRect().top;
+                syncModeratorBottomButton();
+            } else if (moveToReadStart || (changed && stickToBottom)) scrollModeratorListToBottom();
             scheduleModeratorReadCheck();
         }
 
-        function isModeratorListNearBottom(threshold = 40) {
+        function isModeratorListNearBottom(threshold) {
             if (!moderatorList) return false;
             const distance = moderatorList.scrollHeight - moderatorList.scrollTop - moderatorList.clientHeight;
             return distance <= threshold;
@@ -721,10 +774,9 @@
             scheduleModeratorReadCheck();
         }
 
-        function setModeratorPanelOpen(open) {
-            const wasOpen = moderatorPanelOpen;
-            moderatorPanelOpen = open;
+        function syncModeratorPanelToggle() {
             if (!moderatorBox || !moderatorToggle) return;
+            const open = moderatorPanelOpen;
             const openValue = open ? "1" : "0";
             const expandedValue = open ? "true" : "false";
             const unread = moderatorMessages.filter((message) => message.unread).length;
@@ -734,16 +786,19 @@
                 moderatorToggle.setAttribute("aria-expanded", expandedValue);
             }
             if (moderatorToggle.getAttribute("aria-label") !== label) moderatorToggle.setAttribute("aria-label", label);
-            // 패널이 새로 열릴 때(닫힘→열림)만 최신 메시지가 보이도록 맨 아래로 내린다.
-            // display:none 인 동안에는 scrollHeight 가 0 이라 dataset.open="1" 로 표시된
-            // 뒤에 실행해야 한다.
-            if (open && !wasOpen) scrollModeratorListToBottom();
-            if (open && !wasOpen) scheduleModeratorReadCheck();
-            syncModeratorBottomButton();
-            if (!open && moderatorReadFrame !== null) {
-                cancelAnimationFrame(moderatorReadFrame);
+        }
+
+        function setModeratorPanelOpen(open) {
+            moderatorPanelOpen = open;
+            syncModeratorPanelToggle();
+            if (open) renderModeratorList({ startReading: true });
+            else {
+                unreadStartRecordId = null;
+                moderatorUnreadDivider?.remove();
+                if (moderatorReadFrame !== null) cancelAnimationFrame(moderatorReadFrame);
                 moderatorReadFrame = null;
             }
+            syncModeratorBottomButton();
         }
 
         function removeModeratorBox() {
@@ -770,6 +825,8 @@
                 moderatorCount = null;
             }
             moderatorRenderedRows.clear();
+            moderatorUnreadDivider = null;
+            unreadStartRecordId = null;
             moderatorAuthors = null;
             moderatorSummary = null;
             moderatorBottomButton = null;
@@ -1163,7 +1220,7 @@
             close.type = "button";
             close.className = "bcct-moderator-box__close";
             close.setAttribute("aria-label", `${MODERATOR_TITLE} 닫기`);
-            close.textContent = "×";
+            close.innerHTML = CheeseSpanner.utils.panelCloseIcon;
             close.addEventListener("click", () => setModeratorPanelOpen(false));
 
             headerRow.append(titleWrap, close);
@@ -1172,6 +1229,12 @@
             list.className = "bcct-moderator-box__list";
             list.addEventListener("scroll", scheduleModeratorReadCheck, { passive: true });
             list.addEventListener("focusin", scheduleModeratorReadCheck);
+
+            moderatorUnreadDivider = document.createElement("div");
+            moderatorUnreadDivider.className = "bcct-moderator-unread-divider";
+            moderatorUnreadDivider.setAttribute("role", "separator");
+            moderatorUnreadDivider.textContent = "새 메시지";
+            moderatorUnreadDivider.setAttribute("aria-label", moderatorUnreadDivider.textContent);
 
             const authors = document.createElement("div");
             authors.className = "bcct-moderator-authors";
@@ -1224,8 +1287,7 @@
                 moderatorResizeObserver = new ResizeObserver(scheduleModeratorReadCheck);
                 moderatorResizeObserver.observe(list);
             }
-            setModeratorPanelOpen(moderatorPanelOpen);
-            renderModeratorList();
+            renderModeratorList({ startReading: moderatorPanelOpen });
             observeProvisionalModeratorAnchor(host, rootEl, menuButtonConfirmed);
         }
 

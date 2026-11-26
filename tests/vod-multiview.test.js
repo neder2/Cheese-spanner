@@ -41,7 +41,10 @@ function detail(no, overrides) {
     };
 }
 
-function rewindDetail(no) {
+function rewindDetail(
+    no,
+    playlist = "https://ex-nlive-slitvod-streaming.navercdn.com/chzzk/fixture/index.m3u8?token=fixture"
+) {
     const response = detail(no, { vodStatus: "NONE", inKey: null });
     const { videoId, duration } = response.content;
     response.content.liveRewindPlaybackJson = JSON.stringify({
@@ -60,7 +63,7 @@ function rewindDetail(no) {
             {
                 mediaId: "HLS",
                 protocol: "HLS",
-                path: "https://ex-nlive-slitvod-streaming.navercdn.com/chzzk/fixture/index.m3u8?token=fixture",
+                path: playlist,
                 encodingTrack: [{ encodingTrackId: "720p", videoWidth: 1280, videoHeight: 720 }],
             },
         ],
@@ -280,8 +283,10 @@ function fixture(t) {
     files([
         "features/liveMultiview/model.js",
         "features/liveMultiview/view.js",
+        "features/vodMultiview/rewindSourcePage.js",
         "features/vodMultiview/nativePlayer.js",
         "features/vodMultiview/syncPage.js",
+        "features/vodMultiview/rewindSource.js",
         "features/vodMultiview/metadata.js",
         "features/vodMultiview/runtime.js",
     ]);
@@ -377,6 +382,10 @@ test("validates canonical VOD links and rejects ambiguous time, restricted acces
     await read({ inKey: "a@b?c" }, "restricted");
     await read({ videoType: "UPLOAD" }, "unsupported");
     await read({ encryptionType: "DRM" }, "unsupported");
+    await read({ vodStatus: "UPLOAD", liveRewindPlaybackJson: "", adult: true }, "restricted");
+    await read({ vodStatus: "NONE", liveRewindPlaybackJson: "", encryptionType: "DRM" }, "unsupported");
+    await read({ vodStatus: "NONE", liveRewindPlaybackJson: "" }, "preparing");
+    await read({ vodStatus: "ABR_HLS", liveRewindPlaybackJson: "" }, "unsupported");
     await read({ liveOpenDate: null }, "unknown-time");
     await read({ duration: 17 * 3600 }, "unknown-time");
     await read({ nextVideo: { duration: 17 * 3600 } }, "unknown-time");
@@ -441,6 +450,132 @@ test("loads a public rewind into a reusable native slot and rejects other playli
     assert.equal(f.w.CheeseSpannerVodNative.getAuxiliaries()[0], slot);
     assert.equal(sub.srcObject.protocol, "vod3:");
     assert.equal(sub.src, src("media_3", "key_3"));
+});
+
+test("adds an Akamai rewind by channel or URL with its signed playlist intact", async (t) => {
+    const f = fixture(t);
+    const playlist = "https://light-slit.akamaized.net/chzzk/kr/live_rewind/c/fixture/vod_playlist.m3u8?hdnts=fixture";
+    const replay = rewindDetail(2, playlist);
+    replay.content.channel = { channelId: "b".repeat(32) };
+    f.responses.set(2, replay);
+    f.pages.set(0, [{ videoNo: 2, videoType: "REPLAY", publishDate: "2026-11-09 20:03:00" }]);
+    f.apply(true);
+    f.open();
+    await f.chooseChannel();
+    assert.equal(f.players.length, 2, "the overlapping rewind is added from channel search");
+    const sub = f.players[1];
+    assert.equal(sub.srcObject.data.media[0].path, playlist);
+    f.remove();
+    await flush();
+    f.add(2);
+    await flush();
+    assert.equal(sub.srcObject.data.media[0].path, playlist);
+    sub.loaded(60);
+    assert.deepEqual(sub.seeks, [10]);
+    sub.seeked();
+    await flush();
+    assert.match(f.status(), /맞췄습니다/);
+    assert.deepEqual(f.main.seeks, []);
+});
+
+test("accepts verified PZP 1.17.4 players and rejects unverified SDK versions", async (t) => {
+    const f = fixture(t);
+    f.main.constructor.version = "1.17.4";
+    f.apply(true);
+    f.open();
+
+    const replay = rewindDetail(2, "https://light-slit.akamaized.net/chzzk/kr/live_rewind/c/fixture/vod_playlist.m3u8");
+    f.responses.set(2, replay);
+    f.add(2);
+    await flush();
+    assert.equal(f.players.length, 2);
+    const [slot] = f.w.CheeseSpannerVodNative.getAuxiliaries();
+    const sub = slot.player;
+    sub.loaded(60);
+    assert.deepEqual(sub.seeks, [10]);
+    sub.seeked();
+    await flush();
+    assert.match(f.status(), /맞췄습니다/);
+
+    f.remove();
+    assert.equal(await slot.idle, true);
+    assert.equal(sub._lastSrcObj, null);
+
+    f.main.constructor.version = "1.18.0";
+    f.add(3);
+    await flush();
+    assert.match(f.status(), /재생 형식을 지원하지/);
+    assert.equal(f.players.length, 2);
+});
+
+test("compares the precise rewind duration at the resolution of the catalogue's whole seconds", async (t) => {
+    const f = fixture(t);
+    const replay = rewindDetail(2);
+    replay.content.duration = 39287;
+    const playback = JSON.parse(replay.content.liveRewindPlaybackJson);
+    playback.meta.duration = 39281.633;
+    replay.content.liveRewindPlaybackJson = JSON.stringify(playback);
+    f.responses.set(2, replay);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    assert.equal(f.players.length, 2, "a rewind lagging behind the catalogue by one HLS segment is playable");
+    const sub = f.players[1];
+    assert.equal(sub.srcObject.data.meta.duration, 39281.633, "the provider receives its original duration");
+    sub.loaded(39285.714);
+    sub.seeked();
+    await flush();
+    assert.match(f.status(), /맞췄습니다/);
+
+    for (const reader of [f.w.CheeseSpannerVodRewind, f.w.CheeseSpannerVodNative]) {
+        const read = (length) => reader.readRewindSource(replay.content.liveRewindPlaybackJson, "media_2", length);
+        assert.ok(read(39292), "a ten-second shortfall at catalogue precision is still accepted");
+        assert.equal(read(39293), null, "an eleven-second shortfall still disagrees");
+        assert.equal(read(39291.64), null, "a fractional catalogue value keeps its precision");
+        assert.ok(read(39280), "a two-second overshoot at catalogue precision is still accepted");
+        assert.equal(read(39279), null, "a three-second overshoot still disagrees");
+    }
+});
+
+test("a newly uploaded replay without a source can be retried in the same row once its rewind is ready", async (t) => {
+    const f = fixture(t);
+    f.responses.set(2, detail(2, { vodStatus: "UPLOAD", videoId: null, inKey: null, liveRewindPlaybackJson: null }));
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    assert.match(f.status(), /보조 영상.*재생 준비 중/);
+    const retry = f.document.querySelector(`${TOOLBAR} .bcvm-sync`);
+    assert.equal(retry.dataset.retry, "true");
+    assert.equal(f.players.length, 1);
+    const ready = rewindDetail(2);
+    ready.content.vodStatus = "UPLOAD";
+    f.responses.set(2, ready);
+    retry.click();
+    await flush();
+    assert.equal(f.document.querySelector(`${TOOLBAR} .bcvm-sync`), retry);
+    assert.equal(f.players[1].srcObject.data.meta.videoId, "media_2");
+    assert.deepEqual(f.main.seeks, []);
+});
+
+test("rewind playlist validation in both worlds stays scoped to the supported HTTPS media origins and paths", (t) => {
+    const f = fixture(t);
+    for (const playlist of [
+        "http://light-slit.akamaized.net/chzzk/fixture/index.m3u8",
+        "https://other.akamaized.net/chzzk/fixture/index.m3u8",
+        "https://light-slit.akamaized.net.example.com/chzzk/fixture/index.m3u8",
+        "https://light-slit.akamaized.net:8443/chzzk/fixture/index.m3u8",
+        "https://user@light-slit.akamaized.net/chzzk/fixture/index.m3u8",
+        "https://light-slit.akamaized.net/another-service/index.m3u8",
+        "https://light-slit.akamaized.net/chzzk/fixture/index.mp4",
+        "https://light-slit.akamaized.net/chzzk/fixture/index.m3u8#fragment",
+    ]) {
+        const { liveRewindPlaybackJson, videoId, duration } = rewindDetail(2, playlist).content;
+        for (const reader of [f.w.CheeseSpannerVodRewind, f.w.CheeseSpannerVodNative]) {
+            assert.equal(reader.readRewindSource(liveRewindPlaybackJson, videoId, duration), null, playlist);
+        }
+    }
 });
 
 test("uses the current native rewind as the broadcast clock when adding a standard replay", async (t) => {
@@ -749,8 +884,38 @@ test("a canceled independent play cannot resume after pause, removal or route ch
     }
 });
 
+test("shows only the current replay's page title for the main row before auxiliary metadata is needed", (t) => {
+    const f = fixture(t);
+    const { document } = f;
+    document.head.insertAdjacentHTML(
+        "beforeend",
+        '<meta property="og:url" content="https://chzzk.naver.com/video/9"><meta property="og:title" content="이전 채널 - 이전 영상">'
+    );
+    f.apply(true);
+    f.open();
+    const row = document.querySelector(`${TOOLBAR} .bcvm-main-entry`);
+    const channel = row.querySelector(".bcvm-channel");
+    const title = row.querySelector(".bcvm-title");
+    assert.equal(title.textContent, "다시보기 1");
+    assert.equal(channel.hidden, true);
+    document.querySelector(`${PANEL}-launcher`).click();
+    document.head.querySelector('[property="og:url"]').content = url(1);
+    document.head.querySelector('[property="og:title"]').content = "현재 채널 - 현재 영상";
+    f.open();
+    assert.equal(channel.textContent, "현재 채널");
+    assert.equal(channel.hidden, false);
+    assert.equal(title.textContent, "현재 영상");
+    document.querySelector(`${PANEL}-launcher`).click();
+    document.head.querySelector('[property="og:title"]').content = "A - B - C";
+    f.open();
+    assert.equal(title.textContent, "A - B - C");
+    assert.equal(channel.hidden, true);
+    assert.equal(f.requests.length, 0);
+});
+
 test("compact replay actions retain accessible status and retry without a permanent status row", async (t) => {
     const f = fixture(t);
+    f.responses.set(1, detail(1, { channel: { channelId: "a".repeat(32), channelName: "메인 채널" } }));
     f.responses.set(2, { code: 500 });
     f.apply(true);
     f.open();
@@ -760,9 +925,15 @@ test("compact replay actions retain accessible status and retry without a perman
     const toggle = row.querySelector(".bcvm-sync");
     const remove = row.querySelector(".bcvm-remove");
     const status = row.querySelector('[role="status"]');
+    const mainRow = row.parentElement.firstElementChild;
+    assert.equal(mainRow.querySelector(".bcvm-role").textContent, "메인");
+    assert.equal(mainRow.querySelector(".bcvm-channel").textContent, "메인 채널");
+    assert.equal(mainRow.querySelector(".bcvm-title").textContent, "다시보기 1");
+    assert.equal(mainRow.querySelector("button"), null);
+    assert.equal(row.querySelector(".bcvm-role").textContent, "서브 1");
     assert.equal(toggle.nextElementSibling, remove);
     assert.equal(remove.textContent, "");
-    assert.ok(remove.querySelector("svg"));
+    assert.equal(remove.firstElementChild.outerHTML, f.w.CheeseSpanner.multiviewView.panelIcon("remove").outerHTML);
     assert.match(remove.getAttribute("aria-label"), /빼기/);
     assert.equal(toggle.getAttribute("aria-describedby"), status.id);
     assert.equal(row.querySelector(".bcvm-entry-state"), null);
@@ -791,13 +962,17 @@ test("compact replay actions retain accessible status and retry without a perman
     assert.equal(toggle.getAttribute("aria-checked"), "true");
     assert.equal(toggle.getAttribute("aria-disabled"), "false");
     assert.equal(row.querySelector(".bcvm-title").title, title);
-    assert.equal(row.querySelector(".bcvm-title").nextElementSibling.textContent, "스트리머");
+    assert.equal(row.querySelector(".bcvm-title").previousElementSibling.textContent, "스트리머");
     f.add(3);
     await flush();
+    const next = row.nextElementSibling;
+    assert.equal(next.querySelector(".bcvm-role").textContent, "서브 2");
     const other = f.players[2];
     const source = other.srcObject;
     remove.click();
     assert.equal(row.isConnected, false);
+    assert.equal(mainRow.nextElementSibling, next);
+    assert.equal(next.querySelector(".bcvm-role").textContent, "서브 1");
     assert.equal(sub.src, "");
     assert.equal(other.srcObject, source);
     assert.equal(f.document.querySelectorAll(`${TOOLBAR} .bcvm-entry`).length, 1);
@@ -1091,7 +1266,7 @@ function layoutFixture(f) {
     const host = f.document.getElementById("player_layout");
     let popped = false;
     let viewport = [1200, 800];
-    const dock = new f.w.DOMRect(240, 60, 920, 520);
+    let dock = new f.w.DOMRect(240, 60, 920, 520);
     host.getBoundingClientRect = () => (popped ? new f.w.DOMRect(0, 0, ...viewport) : dock);
     host.togglePopover = (open) => (popped = open);
     host.hidePopover = () => {
@@ -1139,12 +1314,272 @@ function layoutFixture(f) {
         pointer,
         drag,
         opened: () => popped,
+        setDock(width, height) {
+            dock = new f.w.DOMRect(240, 60, width, height);
+            f.w.dispatchEvent(new f.w.Event("resize"));
+        },
         setViewport(width, height) {
             viewport = [width, height];
             f.w.dispatchEvent(new f.w.Event("resize"));
         },
     };
 }
+
+test("uses the live default slots at both widths and resets after docking into a specific empty slot", async (t) => {
+    const f = fixture(t);
+    const layout = layoutFixture(f);
+    f.apply(true);
+    f.open();
+    for (const [width, height] of [
+        [920, 520],
+        [600, 340],
+    ]) {
+        layout.setDock(width, height);
+        if (!layout.pane(2)) {
+            f.add(2);
+            await flush();
+        }
+        const r = layout.host.getBoundingClientRect();
+        const main = layout.rect(1),
+            sub = layout.rect(2);
+        assert.equal(main.x, r.left);
+        assert.equal(main.y, r.top);
+        assert.ok(Math.abs(main.width - (r.width * 2) / 3) < 0.01 && Math.abs(main.height - (r.height * 2) / 3) < 0.01);
+        assert.ok(Math.abs(sub.x - (r.left + main.width)) < 0.01 && sub.y === r.top);
+        assert.ok(Math.abs(sub.width - r.width / 3) < 0.01 && Math.abs(sub.height - r.height / 3) < 0.01);
+    }
+    const initial = [1, 2].map(layout.rect);
+    const sources = f.players.map((player) => player.srcObject);
+    const r = layout.host.getBoundingClientRect();
+    const bottom = (x) => ({ clientX: r.left + r.width * x, clientY: r.top + (r.height * 5) / 6 });
+    layout.pointer(layout.pane(1).querySelector(".bcvm-grip"), "pointerdown", layout.center(1));
+    layout.pointer(f.document.body, "pointermove", bottom(1 / 6));
+    layout.pointer(f.document.body, "pointermove", bottom(5 / 6));
+    layout.pointer(f.document.body, "pointerup", bottom(5 / 6));
+    assert.deepEqual(layout.center(1), bottom(5 / 6));
+    layout.setDock(920, 520);
+    layout.setDock(600, 340);
+    assert.deepEqual(layout.center(1), bottom(5 / 6), "crossing the old breakpoint preserves a custom layout");
+    f.byText("기본 배치").click();
+    assert.deepEqual([1, 2].map(layout.rect), initial);
+    assert.deepEqual(
+        f.players.map((player) => player.srcObject),
+        sources
+    );
+    f.remove();
+    assert.equal(layout.host.hasAttribute("data-bcvm-split"), false, "the main alone fills the native player again");
+});
+
+test("folding the empty bottom replay row preserves the native frame and playback and resets the default slots", async (t) => {
+    const f = fixture(t);
+    const layout = layoutFixture(f);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const rootDivider = () => f.document.querySelector(`${PANEL} [data-bcvm-divider="r"]`);
+    const bounds = layout.host.getBoundingClientRect();
+    const point = (y) => ({ clientX: bounds.left + 200, clientY: bounds.top + bounds.height * y });
+    const sources = f.players.map((player) => player.srcObject);
+    layout.pointer(rootDivider(), "pointerdown", point(2 / 3));
+    layout.pointer(f.document.body, "pointermove", point(1));
+    layout.pointer(f.document.body, "pointercancel", point(1));
+    assert.equal(rootDivider().getAttribute("aria-valuenow"), "67");
+    layout.drag(rootDivider(), point(2 / 3), point(1));
+    assert.equal(rootDivider().getAttribute("aria-orientation"), "vertical");
+    assert.equal(f.document.querySelectorAll(`${PANEL} .bcvm-divider:not([hidden])`).length, 2);
+    assert.equal(layout.pane(1).style.height, "100%");
+    assert.equal(layout.pane(2).style.height, "100%");
+    assert.equal(layout.host.style.getPropertyValue("--bcmv-packed-aspect"), "");
+    assert.deepEqual(
+        f.players.map((player) => player.srcObject),
+        sources
+    );
+    assert.equal(f.main.video.currentTime, 40);
+    f.byText("기본 배치").click();
+    assert.equal(rootDivider().getAttribute("aria-valuenow"), "67");
+    assert.equal(layout.host.hasAttribute("data-bcmv-packed"), false);
+    const end = new f.w.KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true });
+    assert.equal(rootDivider().dispatchEvent(end), true);
+    assert.equal(rootDivider().getAttribute("aria-valuenow"), "67");
+    for (let step = 0; step < 8; step++) {
+        rootDivider().dispatchEvent(new f.w.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    }
+    assert.equal(rootDivider().getAttribute("aria-valuenow"), rootDivider().getAttribute("aria-valuemax"));
+    assert.equal(rootDivider().getAttribute("aria-orientation"), "horizontal");
+    assert.equal(layout.host.hasAttribute("data-bcmv-packed"), false);
+    f.byText("기본 배치").click();
+    f.add(3);
+    f.add(4);
+    await flush();
+    layout.drag(rootDivider(), point(2 / 3), point(1));
+    assert.equal(rootDivider().getAttribute("aria-orientation"), "horizontal");
+    assert.ok(layout.rect(4).height > 0);
+    assert.deepEqual(
+        f.players.slice(0, 2).map((player) => player.srcObject),
+        sources
+    );
+    f.document.querySelector(`${PANEL}-launcher`).click();
+    assert.equal(layout.host.hasAttribute("data-bcmv-packed"), false);
+});
+
+test("pulling the folded replay row grip tracks the pointer, cancels and keeps the same players", async (t) => {
+    const f = fixture(t);
+    const { host, pane, pointer, drag } = layoutFixture(f);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    host.getBoundingClientRect = () => new f.w.DOMRect(100, 30, 960, host.dataset.bcmvPacked ? 360 : 540);
+    const frame = host.getBoundingClientRect();
+    const gripY = frame.bottom - 4;
+    const halfway = gripY - frame.height / 2;
+    const root = f.document.querySelector('[data-bcvm-divider="r"]');
+    const grip = () => f.document.querySelector(`${PANEL} [aria-label="접힌 하단 줄 펼치기"]:not([hidden])`);
+    const key = (target, key) =>
+        target.dispatchEvent(new f.w.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    const at = (y) => ({ clientX: 580, clientY: y });
+    const move = (y) => pointer(f.document.body, "pointermove", at(y));
+    const sources = f.players.map((player) => player.srcObject);
+    const requests = f.requests.length;
+    drag(root, at(frame.top + frame.height * (2 / 3)), at(frame.bottom));
+    assert.ok(grip());
+    assert.equal(grip().tabIndex, -1);
+    grip().focus();
+    assert.equal(f.document.activeElement, root);
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    pointer(grip(), "pointerdown", at(gripY));
+    move(gripY + 13);
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    move(halfway);
+    assert.equal(root.getAttribute("aria-valuenow"), "50");
+    move(gripY);
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    move(halfway);
+    pointer(f.document.body, "pointercancel", at(halfway));
+    assert.notEqual(f.document.activeElement, grip());
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    pointer(grip(), "pointerdown", at(gripY));
+    pointer(f.document.body, "pointerup", at(halfway));
+    assert.equal(pane(1).style.height, "50%");
+    assert.equal(pane(2).style.height, "50%");
+    assert.equal(grip(), null);
+    assert.equal(f.document.activeElement, root);
+    drag(root, at(halfway + 4), at(frame.bottom));
+    assert.equal(key(grip(), "ArrowUp"), true, "the grip leaves the arrow key available to the page");
+    assert.equal(root.getAttribute("aria-orientation"), "vertical");
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    assert.deepEqual(
+        f.players.map((player) => player.srcObject),
+        sources
+    );
+    assert.equal(f.main.video.currentTime, 40);
+    assert.equal(f.requests.length, requests);
+});
+
+test("dragging the native replay to the folded bottom edge opens three targets and leaves playback in place", async (t) => {
+    const f = fixture(t);
+    const layout = layoutFixture(f);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const { host, pane, pointer } = layout;
+    host.getBoundingClientRect = () => new f.w.DOMRect(100, 30, 960, host.dataset.bcmvPacked ? 360 : 540);
+    const point = (x, y) => ({ clientX: 100 + x, clientY: 30 + y });
+    const preview = f.document.querySelector(`${PANEL} .bcvm-drop-preview`);
+    const root = f.document.querySelector('[data-bcvm-divider="r"]');
+    layout.drag(root, point(580, 360), point(580, 540));
+    const packed = layout.rect(1);
+    assert.equal(host.getBoundingClientRect().height, 540);
+    const height = host.getBoundingClientRect().height;
+    const sources = f.players.map((player) => player.srcObject);
+    const start = () => pointer(f.main.video, "pointerdown", layout.center(1));
+    const move = (x, y) => pointer(f.document.body, "pointermove", point(x, y));
+    start();
+    move(240, 220);
+    assert.equal(preview.hidden, true, "a drag inside the same replay leaves the row folded");
+    move(160, height - 1);
+    assert.equal(preview.hidden, false);
+    assert.equal(preview.textContent, "하단에 배치");
+    assert.equal(host.getBoundingClientRect().height, 540);
+    move(800, 500);
+    assert.ok(Math.abs(parseFloat(pane(1).style.left) - 200 / 3) < 1e-6);
+    pointer(f.document.body, "pointercancel", point(800, 500));
+    assert.deepEqual(layout.rect(1), packed);
+
+    start();
+    move(160, height - 1);
+    move(480, 460);
+    move(160, 150);
+    assert.equal(preview.hidden, true);
+    assert.deepEqual(layout.rect(1), packed);
+    move(800, height + 2);
+    pointer(f.document.body, "pointerup", point(480, 495));
+    assert.equal(root.getAttribute("aria-orientation"), "horizontal");
+    assert.ok(Math.abs(parseFloat(pane(1).style.left) - 100 / 3) < 1e-6);
+    assert.ok(Math.abs(parseFloat(pane(1).style.top) - 200 / 3) < 1e-6);
+    assert.equal(pane(2).style.top, "0%");
+    assert.deepEqual(
+        f.players.map((player) => player.srcObject),
+        sources
+    );
+    assert.equal(f.main.video.currentTime, 40);
+    assert.equal(f.w.location.pathname, "/video/1");
+});
+
+test("equalizes both secondary regions while preserving the main, playback and timeline", async (t) => {
+    const f = fixture(t);
+    const layout = layoutFixture(f);
+    f.apply(true);
+    f.open();
+    const align = f.byText("보조 방송 정렬");
+    assert.equal(align.disabled, true);
+    f.add(2);
+    await flush();
+    assert.equal(align.disabled, true);
+    for (const no of [3, 4, 5, 6]) f.add(no);
+    await flush();
+    assert.equal(align.disabled, false);
+    const sources = f.players.map((player) => player.srcObject);
+    const requests = f.requests.length;
+    const main = layout.rect(1);
+    const key = (path, key) =>
+        f.document
+            .querySelector(`[data-bcvm-divider="${path}"]`)
+            .dispatchEvent(new f.w.KeyboardEvent("keydown", { key, bubbles: true }));
+    key("rab", "ArrowDown");
+    key("rba", "ArrowRight");
+    assert.ok(Math.abs(layout.rect(2).height - layout.rect(3).height) > 1);
+    assert.ok(Math.abs(layout.rect(4).width - layout.rect(5).width) > 1);
+    const free = f.byText("자유 배치");
+    free.click();
+    assert.equal(align.disabled, true);
+    const from = layout.center(2);
+    layout.drag(layout.pane(2).querySelector(".bcvm-grip"), from, { ...from, clientY: 775 });
+    const firstSub = () => f.document.querySelector(`${TOOLBAR} .bcvm-entry .bcvm-title`).href;
+    assert.equal(firstSub(), url(3), "the free windows are numbered in their current visual order");
+    free.click();
+    assert.equal(align.disabled, false);
+    assert.equal(firstSub(), url(2), "returning to the split restores its own row order");
+    Object.defineProperty(f.document, "fullscreenElement", { configurable: true, value: f.main.shadowRoot });
+    f.document.dispatchEvent(new f.w.Event("fullscreenchange"));
+    assert.equal(align.disabled, true);
+    delete f.document.fullscreenElement;
+    f.document.dispatchEvent(new f.w.Event("fullscreenchange"));
+    align.click();
+    assert.deepEqual(layout.rect(1), main);
+    assert.ok(Math.abs(layout.rect(2).height - layout.rect(3).height) < 0.01);
+    for (const no of [5, 6]) assert.ok(Math.abs(layout.rect(4).width - layout.rect(no).width) < 0.01);
+    assert.deepEqual(
+        f.players.map((player) => player.srcObject),
+        sources
+    );
+    assert.equal(f.requests.length, requests);
+    assert.equal(f.main.video.currentTime, 40);
+    assert.equal(f.main.paused, false);
+    assert.equal(f.document.querySelector(`${TIMELINE} .bcvm-timeline-jump`).textContent, "공통 구간으로 이동");
+});
 
 test("drags and docks the existing players while the main replay keeps its identity", async (t) => {
     const f = fixture(t);
@@ -1172,6 +1607,15 @@ test("drags and docks the existing players while the main replay keeps its ident
     layout.drag(first.video, layout.center(2), layout.center(3));
     assert.deepEqual([layout.rect(2), layout.rect(3)], [before[2], before[1]]);
     assert.equal(f.document.querySelector(`${TOOLBAR} .bcvm-entry .bcvm-title`).textContent, "다시보기 3");
+    const reordered = [...f.document.querySelectorAll(`${TOOLBAR} .bcvm-entry`)];
+    assert.deepEqual(
+        reordered.map((row) => row.querySelector(".bcvm-role").textContent),
+        ["서브 1", "서브 2"]
+    );
+    assert.deepEqual(
+        reordered.map((row) => row.querySelector(".bcvm-title").href),
+        [url(3), url(2)]
+    );
 
     main.shadowRoot.setAttribute("data-bcz-pannable", "");
     const nextMain = layout.rect(3);
@@ -1214,9 +1658,9 @@ test("links auxiliary channel names and list titles to their own replay without 
     assert.ok(title);
     assert.equal(grip.textContent, "서브 채널");
     assert.equal(title.textContent, "다시보기 2");
-    assert.equal(title.nextElementSibling.textContent, "서브 채널");
-    assert.equal(title.nextElementSibling.hidden, false);
-    assert.equal(f.document.querySelectorAll(`${TOOLBAR} .bcvm-channel`)[1].hidden, true);
+    assert.equal(title.previousElementSibling.textContent, "서브 채널");
+    assert.equal(title.previousElementSibling.hidden, false);
+    assert.equal(f.document.querySelectorAll(`${TOOLBAR} .bcvm-entry .bcvm-channel`)[1].hidden, true);
     assert.equal(grip.href, url(2));
     assert.equal(title.href, url(2));
     assert.equal(grip.draggable, false, "link dragging must keep the existing layout gesture");
@@ -1458,6 +1902,26 @@ test("common interval jump seeks the owned main once and preserves pause, rate a
     f.main.seeked();
     assert.equal(timeline.querySelector(".bcvm-timeline-now").textContent, "현재 20:00:30");
     assert.equal(button.disabled, false);
+    assert.equal(f.main.playCalls, 0);
+});
+
+test("the last frame of the main replay still permits a jump to the shared interval", async (t) => {
+    const f = fixture(t);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const timeline = f.document.querySelector(TIMELINE);
+    await toggleTimeline(timeline);
+    Object.defineProperty(f.main.video, "ended", { configurable: true, value: true });
+    f.main.state.paused = true;
+    f.move(120);
+    f.main.emit("ended");
+    const jump = timeline.querySelector(".bcvm-timeline-jump");
+    assert.equal(jump.disabled, false);
+    assert.match(timeline.querySelector(".bcvm-timeline-now").textContent, /20:02:00/);
+    jump.click();
+    assert.deepEqual(f.main.seeks, [30]);
     assert.equal(f.main.playCalls, 0);
 });
 
@@ -2045,6 +2509,30 @@ test("selects a channel replay that ended and was published before the current m
     assert.deepEqual(f.main.seeks, []);
 });
 
+test("selecting a channel captures the current replay and time before the first main lookup resolves", async (t) => {
+    const f = fixture(t);
+    const channel = { channelId: "b".repeat(32) };
+    f.pages.set(0, [
+        { videoNo: 2, videoType: "REPLAY", publishDate: "2026-11-09 20:03:00" },
+        { videoNo: 3, videoType: "REPLAY", publishDate: "2026-11-09 20:02:00" },
+    ]);
+    f.responses.set(2, detail(2, { channel, liveOpenDate: START, duration: 60 }));
+    f.responses.set(3, detail(3, { channel, liveOpenDate: "2026-11-09 20:01:00", duration: 60 }));
+    let finishMain;
+    f.responses.set(1, new Promise((resolve) => (finishMain = resolve)));
+    f.apply(true);
+    f.open();
+    await f.chooseChannel();
+    assert.ok(f.requests.some(({ no }) => no === 1));
+    f.move(80);
+    finishMain(detail(1));
+    await flush();
+    assert.ok(f.document.querySelector(`${PANEL} [data-bcvm-tile="2"]`));
+    assert.equal(f.document.querySelector(`${PANEL} [data-bcvm-tile="3"]`), null);
+    assert.equal(f.main.video.currentTime, 80);
+    assert.deepEqual(f.main.seeks, []);
+});
+
 test("keeps a channel match when main seeks outside the overlap during the lookup", async (t) => {
     const f = fixture(t);
     const channel = { channelId: "b".repeat(32) };
@@ -2280,7 +2768,9 @@ test("closing or hiding native chat dismisses replay settings without relocating
             aside.firstElementChild.getBoundingClientRect = () => new f.w.DOMRect(1160, 60, 300, 44);
             f.document.body.append(aside);
             f.apply(true);
+            f.open();
             const trigger = f.document.querySelector(`${PANEL}-chat-settings`);
+            f.document.querySelector(`${TOOLBAR} .bcvm-close`).click();
             trigger.click();
             const toolbar = f.document.querySelector(TOOLBAR);
             const launcher = f.document.querySelector(`${PANEL}-launcher`);
@@ -2358,6 +2848,8 @@ test("opens the existing replay controls from the chat header and restores focus
     f.apply(false);
     assert.equal(f.document.querySelector(`${PANEL}-chat-settings`), null);
     f.apply(true);
+    assert.equal(f.document.querySelector(`${PANEL}-chat-settings`), null, "the page multiview is still off");
+    f.open();
     const trigger = f.document.querySelector(`${PANEL}-chat-settings`);
     const launcher = f.document.querySelector(`${PANEL}-launcher`);
     const toolbar = f.document.querySelector(TOOLBAR);
@@ -2366,12 +2858,14 @@ test("opens the existing replay controls from the chat header and restores focus
     assert.equal(menu.parentElement, actions, "native menu nodes must keep their original parent");
     assert.equal(trigger.getAttribute("aria-controls"), toolbar.id);
     assert.equal(trigger.querySelector("svg").outerHTML, f.w.CheeseSpanner.multiviewView.multiviewIcon().outerHTML);
+    assert.equal(trigger.getAttribute("aria-expanded"), "true");
+    toolbar.querySelector(".bcvm-close").click();
     assert.equal(trigger.getAttribute("aria-expanded"), "false");
     trigger.click();
     assert.equal(toolbar.parentElement, aside);
     assert.equal(toolbar.hidden, false);
     assert.equal(trigger.getAttribute("aria-expanded"), "true");
-    assert.equal(launcher.getAttribute("aria-pressed"), "false", "opening settings alone does not enable playback");
+    assert.equal(launcher.getAttribute("aria-pressed"), "true");
     assert.equal(f.document.activeElement, toolbar.querySelector(".bcvm-add-toggle"));
     assert.equal(menuClicks, 0);
     f.add(2);
@@ -2408,6 +2902,8 @@ test("opens the existing replay controls from the chat header and restores focus
 test("reattaches one replay header button after delayed chat, native clones and menu replacement", async (t) => {
     const f = fixture(t);
     f.apply(true);
+    f.open();
+    f.document.querySelector(`${TOOLBAR} .bcvm-close`).click();
     assert.equal(f.document.querySelector(`${PANEL}-chat-settings`), null);
     const aside = f.document.createElement("aside");
     aside.id = "vod-aside";
@@ -2473,16 +2969,18 @@ test("restores the same main replay's auxiliary list after toggling off and disa
     const mainProvider = main.srcObject;
     const providers = [first.srcObject, second.srcObject];
     assert.ok(providers.every(Boolean));
+    const oldTrigger = f.document.querySelector(`${PANEL}-chat-settings`);
     f.document.querySelector(`${PANEL}-launcher`).click();
     await flush();
     assert.deepEqual(tiles(), []);
     assert.ok(providers.every((provider) => provider.closed));
     assert.ok([first, second].every((player) => player.srcObject === null && player._lastSrcObj === null));
-    f.document.querySelector(`${PANEL}-chat-settings`).click();
+    assert.equal(f.document.querySelector(`${PANEL}-chat-settings`), null);
+    oldTrigger.click();
     await flush();
-    assert.equal(f.document.querySelector(TOOLBAR).hidden, false);
+    assert.equal(f.document.querySelector(TOOLBAR).hidden, true);
     assert.equal(f.document.querySelector(`${PANEL}-launcher`).getAttribute("aria-pressed"), "false");
-    assert.deepEqual(tiles(), [], "opening settings while off must not restart the remembered replays");
+    assert.deepEqual(tiles(), [], "a detached settings button must not restart remembered replays");
     f.open();
     await flush();
     assert.deepEqual(tiles(), ["2", "3"]);
@@ -2510,6 +3008,186 @@ test("restores the same main replay's auxiliary list after toggling off and disa
     assert.equal(main.srcObject, mainProvider);
     assert.equal(main.video.currentTime, 40);
     assert.deepEqual(main.seeks, []);
+});
+
+test("keeps the active replay selection through a same-route player gap without seeking the main", async (t) => {
+    const f = fixture(t);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const root = f.main.shadowRoot;
+    const host = root.parentElement;
+    const sub = f.players[1];
+    const provider = sub.srcObject;
+    sub.loaded(60);
+    sub.seeked();
+    await flush();
+    f.document.querySelector(`${TOOLBAR} .bcvm-sync`).click();
+    sub.video.volume = 0.37;
+    sub.video.muted = false;
+    sub.currentTime = 7;
+    sub.seeked();
+    root.remove();
+    await flush();
+    assert.equal(f.document.querySelector(`${PANEL} .bcvm-screen`).dataset.bcvmTile, "2");
+    host.prepend(root);
+    await flush();
+    assert.equal(f.document.querySelector(`${PANEL}-launcher`).getAttribute("aria-pressed"), "true");
+    assert.match(f.document.querySelector(`${TOOLBAR} .bcvm-entry .bcvm-title`).href, /\/video\/2$/);
+    assert.equal(f.document.querySelector(`${PANEL} .bcvm-screen`).dataset.bcvmTile, "2");
+    assert.equal(f.document.querySelector(`${TOOLBAR} .bcvm-sync`).getAttribute("aria-checked"), "false");
+    assert.equal(sub.srcObject, provider);
+    assert.equal(sub.video.currentTime, 7);
+    assert.equal(sub.video.volume, 0.37);
+    assert.equal(sub.video.muted, false);
+    assert.deepEqual(f.main.seeks, []);
+    f.w.history.pushState({}, "", "/video/9");
+    await flush();
+    assert.equal(f.document.querySelector(`${PANEL}-launcher`).getAttribute("aria-pressed"), "false");
+    assert.equal(f.document.querySelector(`${PANEL} .bcvm-screen`), null);
+});
+
+test("duplicate media removes its temporary slot for sequential and simultaneous adds", async (t) => {
+    const f = fixture(t);
+    f.responses.set(3, detail(3, { videoId: "media_2" }));
+    f.responses.set(4, detail(4, { videoId: "media_2" }));
+    f.apply(true);
+    f.open();
+    f.add(2);
+    f.add(3);
+    await flush();
+    assert.equal(f.document.querySelectorAll(`${PANEL} .bcvm-screen`).length, 1);
+    assert.equal(f.document.querySelectorAll(`${TOOLBAR} .bcvm-entry`).length, 1);
+    assert.match(f.document.querySelector(`${TOOLBAR} .bcvm-notice`).textContent, /이미 화면/);
+    f.add(4);
+    await flush();
+    assert.equal(f.document.querySelectorAll(`${PANEL} .bcvm-screen`).length, 1);
+    f.add(5);
+    await flush();
+    assert.equal(f.document.querySelectorAll(`${PANEL} .bcvm-screen`).length, 2);
+    assert.deepEqual(f.main.seeks, []);
+});
+
+test("leaving the mini player resumes only independently playing auxiliaries that it paused", async (t) => {
+    const f = fixture(t);
+    f.apply(true);
+    f.open();
+    for (const no of [2, 3]) {
+        f.add(no);
+        await flush();
+        f.players[no - 1].loaded(60);
+        f.players[no - 1].seeked();
+        await flush();
+    }
+    for (const control of f.document.querySelectorAll(`${TOOLBAR} .bcvm-sync`)) control.click();
+    const [main, playing, paused] = f.players;
+    paused.pause();
+    const playingTime = playing.video.currentTime;
+    const stoppedPlays = paused.playCalls;
+    const host = main.shadowRoot.parentElement;
+    for (const mode of ["pip_mode", "miniplayer"]) {
+        host.classList.add(mode);
+        await flush();
+        assert.equal(playing.paused, true);
+        host.classList.remove(mode);
+        await flush();
+        assert.equal(playing.paused, false);
+    }
+    assert.equal(playing.video.currentTime, playingTime);
+    assert.equal(paused.paused, true);
+    assert.equal(paused.playCalls, stoppedPlays);
+    assert.deepEqual(main.seeks, []);
+});
+
+test("resync retries only the auxiliary after three failed seeks", async (t) => {
+    const f = fixture(t);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const sub = f.players[1];
+    sub.loaded(60);
+    for (let i = 0; i < 3; i++) sub.seeked(0);
+    const control = f.document.querySelector(`${TOOLBAR} .bcvm-resync`);
+    const toggle = f.document.querySelector(`${TOOLBAR} .bcvm-sync`);
+    assert.equal(control.hidden, false);
+    assert.match(control.getAttribute("aria-label"), /다시 맞추기/);
+    assert.equal(toggle.getAttribute("role"), "switch");
+    assert.equal(toggle.getAttribute("aria-disabled"), "false");
+    const seeks = sub.seeks.length;
+    control.focus();
+    control.click();
+    assert.equal(sub.seeks.length, seeks + 1);
+    sub.seeked();
+    await flush();
+    assert.equal(control.hidden, true);
+    assert.equal(f.document.activeElement, toggle);
+    assert.equal(sub.video.currentTime, 10);
+    f.move(45);
+    for (let i = 0; i < 3; i++) sub.seeked(0);
+    assert.equal(control.hidden, false);
+    const failedSeeks = sub.seeks.length;
+    toggle.click();
+    assert.equal(toggle.getAttribute("aria-checked"), "false");
+    assert.equal(control.hidden, true);
+    assert.equal(sub.seeks.length, failedSeeks);
+    assert.deepEqual(f.main.seeks, []);
+});
+
+test("channel lookup reports an overlapping unsupported replay and prefers a playable one", async (t) => {
+    const f = fixture(t);
+    const channelId = "b".repeat(32);
+    const main = (await f.w.CheeseSpanner.vodMultiviewMetadata.loadVideo("1", {})).media;
+    const published = main.startMs + 120_000;
+    const row = (videoNo) => ({ videoNo, videoType: "REPLAY", publishDateAt: published });
+    f.pages.set(0, [row(2)]);
+    f.responses.set(2, detail(2, { channel: { channelId }, vodStatus: "OTHER" }));
+    const find = () => f.w.CheeseSpanner.vodMultiviewMetadata.findReplay(channelId, main, {});
+    assert.equal((await find()).status, "unsupported");
+    f.pages.set(0, [row(3), row(2)]);
+    f.responses.set(3, detail(3, { channel: { channelId } }));
+    assert.equal((await find()).media.videoNo, "3");
+});
+
+test("channel lookup reports only overlapping pending replays and keeps looking for one that is ready", async (t) => {
+    const f = fixture(t);
+    const model = f.w.CheeseSpanner.vodMultiviewMetadata;
+    const main = (await model.loadVideo("1", {})).media;
+    const channel = { channelId: "b".repeat(32) };
+    const row = (videoNo) => ({ videoNo, videoType: "REPLAY", publishDateAt: main.endMs });
+    const find = () => model.findReplay(channel.channelId, main, {});
+    f.pages.set(0, [row(2)]);
+    const pending = detail(2, { channel, vodStatus: "NONE", inKey: null, liveOpenDate: "2026-11-09 20:02:00" });
+    f.responses.set(2, pending);
+    assert.equal((await find()).status, "no-replay");
+    pending.content.liveOpenDate = START;
+    assert.equal((await find()).status, "preparing");
+    f.responses.set(3, detail(3, { channel, vodStatus: "OTHER" }));
+    f.pages.set(0, [row(3), row(2)]);
+    assert.equal((await find()).status, "preparing");
+    f.responses.set(3, detail(3, { channel }));
+    assert.equal((await find()).media.videoNo, "3");
+});
+
+test("channel lookup skips a rewind with no playable tracks and continues to a supported overlap", async (t) => {
+    const f = fixture(t);
+    const model = f.w.CheeseSpanner.vodMultiviewMetadata;
+    const main = (await model.loadVideo("1", {})).media;
+    const channelId = "b".repeat(32);
+    const row = (videoNo) => ({ videoNo, videoType: "REPLAY", publishDateAt: main.endMs });
+    const rewind = rewindDetail(2);
+    rewind.content.channel = { channelId };
+    const playback = JSON.parse(rewind.content.liveRewindPlaybackJson);
+    playback.media[0].encodingTrack = [];
+    rewind.content.liveRewindPlaybackJson = JSON.stringify(playback);
+    f.responses.set(2, rewind);
+    f.pages.set(0, [row(2)]);
+    const find = () => model.findReplay(channelId, main, { at: main.startMs + 40_000 });
+    assert.equal((await find()).status, "unsupported");
+    f.responses.set(3, detail(3, { channel: { channelId } }));
+    f.pages.set(0, [row(3), row(2)]);
+    assert.equal((await find()).media.videoNo, "3");
 });
 
 test("reuses one native slot across 100 additions, removals, option changes and SPA round trips", async (t) => {

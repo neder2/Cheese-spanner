@@ -224,6 +224,7 @@
                 const current = page ? await readPage(month, page) : first;
                 if (
                     current.totalPages !== first.totalPages ||
+                    (page > 0 && current.data.length === 0) ||
                     (page < first.totalPages - 1 && current.data.length !== PAGE_SIZE)
                 )
                     throw new Error("가져오는 중 사용 내역 변경됨. 다시 가져오기 필요.");

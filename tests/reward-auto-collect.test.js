@@ -92,7 +92,7 @@ function createJsonResponse(data, { ok = true, status = 200 } = {}) {
 
 function createRewardDom(syncOptions = {}, { fetchImpl, clickDelayMs = 0 } = {}) {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-        url: "https://chzzk.naver.com/live/test-channel",
+        url: "https://chzzk.naver.com/live/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });
@@ -313,11 +313,14 @@ test("reward auto collect claims non-watch API rewards and leaves WATCH_1_HOUR t
     const getRequests = requests.filter((request) => request.method === "GET");
     const putRequests = requests.filter((request) => request.method === "PUT");
     assert.equal(getRequests.length, 1);
-    assert.equal(getRequests[0].url, "https://api.chzzk.naver.com/service/v1/channels/test-channel/log-power");
+    assert.equal(
+        getRequests[0].url,
+        "https://api.chzzk.naver.com/service/v1/channels/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/log-power"
+    );
     assert.equal(putRequests.length, 1);
     assert.equal(
         putRequests[0].url,
-        "https://api.chzzk.naver.com/service/v1/channels/test-channel/log-power/claims/follow-claim"
+        "https://api.chzzk.naver.com/service/v1/channels/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/log-power/claims/follow-claim"
     );
     assert.equal(putRequests[0].credentials, "include");
     assert.equal(
@@ -366,6 +369,41 @@ test("reward auto collect discards an in-flight API result after the option is d
         requests.some((request) => request.method === "PUT"),
         false
     );
+});
+
+test("a repeatedly rejected claim does not block later rewards or retry a successful one", async () => {
+    const attempts = [];
+    const dom = createRewardDom(
+        {},
+        {
+            fetchImpl: async (url, options = {}) => {
+                if (options.method !== "PUT") {
+                    return createJsonResponse({
+                        content: {
+                            claims: [
+                                { claimId: "first", claimType: "FOLLOW" },
+                                { claimId: "second", claimType: "WATCH_5_MIN" },
+                            ],
+                        },
+                    });
+                }
+                const claim = String(url).split("/").at(-1);
+                attempts.push(claim);
+                if (claim === "first") throw new TypeError("Network failure");
+                return createJsonResponse({});
+            },
+        }
+    );
+    const setInterval = dom.window.setInterval.bind(dom.window);
+    let poll;
+    dom.window.setInterval = (callback, delay, ...args) => {
+        if (delay === 30000) poll = callback;
+        return setInterval(callback, delay, ...args);
+    };
+    await waitForCondition(() => attempts.length >= 2);
+    poll();
+    await waitForCondition(() => attempts.length >= 3);
+    assert.deepEqual(attempts, ["first", "second", "first"]);
 });
 
 test("reward auto collect observes a reward added after the initial empty aside scan", async () => {
@@ -439,7 +477,7 @@ test("reward auto collect reschedules a pending reward when the live route chang
     scope.appendChild(tracked.button);
     await waitForCondition(() => initialFullScans >= 1);
 
-    dom.window.history.pushState({}, "", "/live/other-channel");
+    dom.window.history.pushState({}, "", "/live/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
 
     await waitForCondition(() => tracked.clicks === 1, { timeoutMs: 1800 });

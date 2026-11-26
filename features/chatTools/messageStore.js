@@ -23,6 +23,7 @@
     const DEFAULT_MAX_MODERATOR_MESSAGES = 100;
     const MAX_ORIGINAL_MESSAGES = 500;
     const MAX_RETIRED_MESSAGE_IDS = 500;
+    const MAX_NATIVE_OBSERVATIONS = 500;
     // 보관 개수로 목록에서 밀려난 메시지의 정체성 상한이에요. DOM에 남은 백로그가 다시 그려질 때 새 기록으로
     // 되살아나지 않게 해요. 재마운트 후보도 보관 개수 + 이 상한까지 둬요.
     const MAX_EVICTED_MODERATOR_MESSAGES = 500;
@@ -44,6 +45,9 @@
         // Native key/user/time identities stay private and live only as long as retained records.
         // Panel IDs remain local counters; a later render of the same native message reuses its record.
         const nativeModeratorMessages = new Map();
+        const nativeObservationOrders = new Map();
+        let rowObservationOrders = new WeakMap();
+        let nextObservationOrder = 1;
         let moderatorRowBindings = new WeakMap();
         let pendingModeratorRemounts = [];
         const moderatorRowTransitions = new Map();
@@ -90,6 +94,91 @@
             return "";
         }
 
+        function hasNativeCollectionRole(parsed) {
+            const message = parsed.pageSource?.message;
+            return (
+                parsed.nativeCoherent === true &&
+                ((message?.roleState === "known" &&
+                    (parsed.roomRole === "broadcaster" || parsed.roomRole === "manager")) ||
+                    (message?.verifiedState === "known" &&
+                        (parsed.verifiedMarkType === "PARTNER" || parsed.verifiedMarkType === "CHALLENGER")))
+            );
+        }
+
+        function isCoherentNormalMessage(parsed) {
+            return (
+                parsed.nativeCoherent === true &&
+                parsed.nativeIdentity &&
+                parsed.pageSource?.message?.status === "NORMAL" &&
+                parsed.text &&
+                !parsed.isBlind &&
+                !parsed.hasPendingBodyImage
+            );
+        }
+
+        function observationOrder(parsed) {
+            const previous = rowObservationOrders.get(parsed.node);
+            const nativeId = parsed.nativeCoherent === true ? parsed.nativeIdentity : "";
+            if (nativeId && nativeObservationOrders.has(nativeId)) return nativeObservationOrders.get(nativeId);
+            const reuseSignal = getCacheRowReuseSignal(parsed.node);
+            const sameRowMessage =
+                previous &&
+                previous.reuseSignal === reuseSignal &&
+                (previous.id === parsed.id || (!previous.nativeId && nativeId)) &&
+                previous.author === parsed.author &&
+                previous.textKey === getTextKey(parsed);
+            const order = sameRowMessage ? previous.order : nextObservationOrder++;
+            rowObservationOrders.set(parsed.node, {
+                id: parsed.id,
+                nativeId,
+                reuseSignal,
+                author: parsed.author,
+                textKey: getTextKey(parsed),
+                order,
+            });
+            if (nativeId) {
+                nativeObservationOrders.set(nativeId, order);
+                if (nativeObservationOrders.size > MAX_NATIVE_OBSERVATIONS)
+                    nativeObservationOrders.delete(nativeObservationOrders.keys().next().value);
+            }
+            return order;
+        }
+
+        function observeModeratorMessage(parsed) {
+            const coherent = isCoherentNormalMessage(parsed);
+            const metadata = parsed.pageSource?.message;
+            if (
+                (coherent && (metadata.roleState === "missing" || metadata.verifiedState === "missing")) ||
+                (parsed.role && parsed.text && parsed.nativeCoherent !== false)
+            )
+                parsed.observationOrder = observationOrder(parsed);
+            // Apply both provisional badges and later role corrections while this row still owns the message.
+            if (coherent) collectModeratorMessage(parsed, { deferNotify: true });
+        }
+
+        function canRefineDomModeratorBinding(binding, parsed) {
+            if (
+                !binding ||
+                binding.message.nativeRoleConfirmed ||
+                !parsed.nativeIdentity ||
+                (parsed.nativeCoherent !== true &&
+                    !(parsed.nativeCoherent === null && parsed.roleSource === "dom" && binding.role === parsed.role)) ||
+                (binding.message.nativeIdentity && binding.message.nativeIdentity !== parsed.nativeIdentity)
+            )
+                return false;
+            // Identity-only bridge data keeps the existing DOM classification. Role changes still
+            // require a coherent native body and metadata; an inconsistent snapshot never upgrades.
+            const explicitId = getExplicitMessageId(parsed.node);
+            return (
+                binding.root === chatRoot &&
+                binding.rowReuseSignal === getCacheRowReuseSignal(parsed.node) &&
+                binding.author === parsed.author &&
+                (binding.role === parsed.role || parsed.roleSource === "native") &&
+                binding.textKey === getTextKey(parsed) &&
+                (!explicitId || explicitId === binding.messageId)
+            );
+        }
+
         function getMessageId(row, parsed) {
             const explicitId = getExplicitMessageId(row);
             const rowReuseSignal = getCacheRowReuseSignal(row);
@@ -98,17 +187,7 @@
             const binding = moderatorRowBindings.get(row);
             if (parsed.nativeIdentity) {
                 let id = nativeModeratorMessages.get(parsed.nativeIdentity)?.id;
-                if (
-                    !id &&
-                    binding &&
-                    !binding.message.nativeIdentity &&
-                    binding.root === chatRoot &&
-                    binding.rowReuseSignal === rowReuseSignal &&
-                    binding.author === parsed.author &&
-                    binding.role === parsed.role &&
-                    binding.textKey === getTextKey(parsed) &&
-                    (!explicitId || explicitId === binding.messageId)
-                ) {
+                if (!id && canRefineDomModeratorBinding(binding, parsed)) {
                     // A late MAIN bridge may identify an already collected row. Upgrade its private
                     // identity without replacing the record, selection or read state.
                     id = binding.messageId;
@@ -395,6 +474,16 @@
                 return "retract";
             }
 
+            // A new server message ends the previous row generation. Its local native ID is not
+            // a correction to the old candidate, even when React reuses the very same DOM row.
+            if (
+                ownership.nativeIdentity &&
+                parsed.nativeIdentity &&
+                ownership.nativeIdentity !== parsed.nativeIdentity
+            ) {
+                return "finalize";
+            }
+
             const snapshot = buildModeratorSnapshot(parsed);
             if (
                 ownership.sourceReuseSignal !== snapshot.rowReuseSignal &&
@@ -429,10 +518,11 @@
         }
 
         function removeModeratorMessage(message, { deferNotify = false } = {}) {
-            const messageIndex = moderatorMessages.indexOf(message);
+            const messages = moderatorMessages.includes(message) ? moderatorMessages : evictedModeratorMessages;
+            const messageIndex = messages.indexOf(message);
             if (messageIndex < 0) return false;
 
-            moderatorMessages.splice(messageIndex, 1);
+            messages.splice(messageIndex, 1);
             if (nativeModeratorMessages.get(message.nativeIdentity) === message)
                 nativeModeratorMessages.delete(message.nativeIdentity);
 
@@ -500,9 +590,15 @@
         }
 
         function isSameBoundModeratorMessage(binding, parsed) {
+            if (parsed.nativeCoherent === false) return false;
             if (!binding || binding.messageId !== parsed.id) return false;
             if (binding.author !== parsed.author || binding.role !== parsed.role) return false;
             return binding.textKey === getTextKey(parsed) || parsed.isBlind === true;
+        }
+
+        function moderatorBadges(parsed) {
+            if (parsed.domRole && parsed.domRole !== parsed.role) return [];
+            return Array.isArray(parsed.badges) ? parsed.badges : [];
         }
 
         function backfillModeratorMessage(existing, parsed, { deferNotify = false } = {}) {
@@ -511,10 +607,25 @@
                 existing.nativeIdentity = parsed.nativeIdentity;
                 nativeModeratorMessages.set(parsed.nativeIdentity, existing);
             }
-            // text/author/role 은 블라인드 전환이나 단계적 DOM 재사용으로 오염될 수
-            // 있으므로 변경하지 않고, 늦게 붙는 뱃지와 닉네임 색만 보충한다.
+            // Native identity can arrive before the role/grade fields. Keep DOM-based eligibility
+            // correctable until native metadata independently confirms a collection target.
+            if (hasNativeCollectionRole(parsed)) existing.nativeRoleConfirmed = true;
+            // Keep the recorded author/body through blind transitions and partial DOM updates.
+            // A coherent native snapshot may refine the role of the same server message without
+            // replacing its record ID or making a read message unread again.
             let backfilled = false;
-            const parsedBadges = Array.isArray(parsed.badges) ? parsed.badges : [];
+            const parsedBadges = moderatorBadges(parsed);
+            if (
+                parsed.nativeCoherent === true &&
+                parsed.roleSource === "native" &&
+                parsed.nativeIdentity === existing.nativeIdentity &&
+                parsed.role &&
+                existing.role !== parsed.role
+            ) {
+                existing.role = parsed.role;
+                existing.badges = parsedBadges;
+                backfilled = true;
+            }
             const existingBadges = Array.isArray(existing.badges) ? existing.badges : [];
             if (!existingBadges.length && parsedBadges.length) {
                 existing.badges = parsedBadges;
@@ -677,21 +788,30 @@
                     author: parsed.author,
                     role: parsed.role,
                     text: parsed.text,
-                    badges: Array.isArray(parsed.badges) ? parsed.badges : [],
+                    observationOrder: parsed.observationOrder ?? observationOrder(parsed),
+                    badges: moderatorBadges(parsed),
                     authorColor: parsed.authorColor || "",
                     timestamp: parsed.timestamp || "",
                     nativeIdentity: parsed.nativeIdentity || "",
+                    nativeRoleConfirmed: hasNativeCollectionRole(parsed),
                     node: parsed.node,
                     sourceIdentityKey: "",
                     unread: true,
                 };
-                moderatorMessages.push(message);
+                if ((moderatorMessages.at(-1)?.observationOrder ?? 0) <= message.observationOrder)
+                    moderatorMessages.push(message);
+                else {
+                    const following = moderatorMessages.findIndex(
+                        (item) => item.observationOrder > message.observationOrder
+                    );
+                    moderatorMessages.splice(following, 0, message);
+                }
                 if (message.nativeIdentity) nativeModeratorMessages.set(message.nativeIdentity, message);
             }
 
             bindModeratorRow(parsed.node, message, buildModeratorSnapshot(parsed));
             syncModeratorHighlight(parsed);
-            if (added && transition) {
+            if (added && transition && parsed.nativeCoherent !== true) {
                 registerModeratorTransitionOwnership(parsed.node, message, buildModeratorSnapshot(parsed), transition);
             }
             if (added) {
@@ -833,7 +953,7 @@
             for (const row of rows) {
                 if (!(row instanceof HTMLElement)) continue;
                 const parsed = parser.parseChatRow(row);
-                const nativeIdentity = parsed.role ? pageMessageIdentity(parser.readPageMessage(row, parsed)) : "";
+                const nativeIdentity = pageMessageIdentity(parser.readPageMessage(row, parsed));
                 if (nativeIdentity) {
                     retiredNativeMessageIds.delete(nativeIdentity);
                     retiredNativeMessageIds.add(nativeIdentity);
@@ -864,6 +984,13 @@
 
         function collectModeratorMessage(parsed, { deferNotify = false } = {}) {
             const row = parsed.node;
+            // Metadata and the visible body can settle in separate React mutations. Wait for a
+            // coherent snapshot; a temporarily incomplete row cannot invalidate an archived message.
+            if (parsed.nativeCoherent === false) {
+                cancelModeratorTransition(row);
+                removeModeratorHighlight(row);
+                return false;
+            }
             if (parsed.nativeIdentity && retiredNativeMessageIds.has(parsed.nativeIdentity)) return false;
             const retired = retiredRows.get(row);
             if (retired && isRetiredRowMessage(retired, parsed)) return false;
@@ -877,6 +1004,41 @@
                 return stageReusedModeratorCandidate(parsed);
             }
             let binding = moderatorRowBindings.get(row);
+            const pageMessage = parsed.pageSource?.message;
+            if (
+                parsed.nativeIdentity &&
+                parsed.nativeCoherent === true &&
+                !parsed.role &&
+                pageMessage?.roleState === "known" &&
+                pageMessage.verifiedState === "known"
+            ) {
+                const provisional =
+                    nativeModeratorMessages.get(parsed.nativeIdentity) ||
+                    (canRefineDomModeratorBinding(binding, parsed) ? binding.message : null);
+                if (provisional && !provisional.nativeRoleConfirmed) {
+                    removeModeratorMessage(provisional, { deferNotify });
+                    binding = moderatorRowBindings.get(row);
+                }
+            }
+            if (binding?.messageId === parsed.id && canRefineDomModeratorBinding(binding, parsed)) {
+                cancelModeratorTransition(row);
+                if (!parsed.role) {
+                    const message = parsed.pageSource?.message;
+                    // Invalid or incomplete metadata cannot retract a previously collected record.
+                    // A known non-target role and grade can correct this DOM-only classification.
+                    if (message?.roleState === "known" && message.verifiedState === "known") {
+                        removeModeratorMessage(binding.message, { deferNotify });
+                    } else {
+                        removeModeratorHighlight(row);
+                    }
+                    return false;
+                }
+                finalizeModeratorTransitionOwnership(row);
+                backfillModeratorMessage(binding.message, parsed, { deferNotify });
+                bindModeratorRow(row, binding.message, buildModeratorSnapshot(parsed));
+                syncModeratorHighlight(parsed);
+                return false;
+            }
             if (binding && isSameBoundModeratorMessage(binding, parsed)) {
                 cancelModeratorTransition(row);
                 backfillModeratorMessage(binding.message, parsed, { deferNotify });
@@ -886,20 +1048,25 @@
             }
 
             const ownership = moderatorTransitionOwnerships.get(row);
-            if (ownership && binding?.message !== ownership.message) {
+            const disposition = ownership ? getModeratorTransitionDisposition(ownership, parsed) : "";
+            if (disposition === "finalize") {
+                finalizeModeratorTransitionOwnership(row, ownership);
+            } else if (ownership && binding?.message !== ownership.message) {
                 removeModeratorMessage(ownership.message, { deferNotify });
                 binding = moderatorRowBindings.get(row);
             } else if (ownership) {
-                const disposition = getModeratorTransitionDisposition(ownership, parsed);
                 if (disposition === "retract") {
                     removeModeratorMessage(ownership.message, { deferNotify });
                     cancelModeratorTransition(row);
                     if (!parsed.role || !parsed.text) return false;
                     return stageReusedModeratorCandidate(parsed);
                 }
-                if (disposition === "finalize") {
-                    finalizeModeratorTransitionOwnership(row, ownership);
-                }
+            }
+
+            if (parsed.role && isCoherentNormalMessage(parsed)) {
+                if (binding && binding.message.nativeIdentity !== parsed.nativeIdentity) detachModeratorRowBinding(row);
+                cancelModeratorTransition(row);
+                return commitModeratorMessage(parsed, { deferNotify });
             }
 
             if (binding) {
@@ -960,6 +1127,8 @@
             moderatorMessages = [];
             evictedModeratorMessages = [];
             nativeModeratorMessages.clear();
+            nativeObservationOrders.clear();
+            rowObservationOrders = new WeakMap();
             rowIds = new WeakMap();
             moderatorRowBindings = new WeakMap();
             pendingModeratorRemounts = [];
@@ -1113,11 +1282,13 @@
         }
 
         function parseChatMessage(row, keepOriginal = false) {
-            const parsed = parser.parseChatRow(row);
-            // Only collection candidates need a native identity. Reuse this validated response in
-            // the blind-reveal path rather than sending a second request for the same synchronous read.
-            if (isModeratorBoxEnabled() && parsed.role)
-                parsed.pageSource = parser.readPageMessage(row, parsed, keepOriginal);
+            const domParsed = parser.parseChatRow(row);
+            // Read before the DOM role gate so renamed badges do not exclude native role metadata.
+            // Collection, keyword exceptions and blind reveal share this single synchronous response.
+            const source = parser.readPageMessage(row, domParsed, keepOriginal);
+            const parsed = parser.enrichChatRole(domParsed, source);
+            parsed.domRole = domParsed.role;
+            parsed.pageSource = source;
             parsed.nativeIdentity = pageMessageIdentity(parsed.pageSource);
             parsed.id = getMessageId(row, parsed);
             return parsed;
@@ -1170,6 +1341,8 @@
             maxModeratorMessages = Number.isFinite(maximum) && maximum > 0 ? maximum : DEFAULT_MAX_MODERATOR_MESSAGES;
             trimModeratorMessages();
             if (!moderatorEnabled) {
+                nativeObservationOrders.clear();
+                rowObservationOrders = new WeakMap();
                 clearModeratorTransitions();
                 retractModeratorTransitionOwnerships({ deferNotify: true });
                 clearModeratorHighlights();
@@ -1199,6 +1372,7 @@
 
         return {
             parseChatMessage,
+            observe: observeModeratorMessage,
             collect: collectModeratorMessage,
             cacheOriginal: cacheOriginalMessageText,
             pageMessageIdentity,

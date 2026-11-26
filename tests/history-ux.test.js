@@ -682,6 +682,28 @@ test("replay lookup keeps paging when the first video page holds only uploads", 
     await waitForCondition(() => f.requests.some((url) => url.includes("page=1")));
 });
 
+test("a resolved replay opens even when saving its link to history fails", async (t) => {
+    const video = { videoNo: 4321, videoType: "REPLAY", liveId: "777" };
+    const f = await openReplayLookup(t, (url) => ({
+        ok: true,
+        json: async () => ({ code: 200, content: url.includes("/videos?") ? { data: [video] } : video }),
+    }));
+    let reply;
+    f.chrome.runtime.sendMessage = (message, callback) => {
+        assert.equal(message.operation.kind, "setReplayVideoNo");
+        reply = callback;
+    };
+    f.link().click();
+    await waitForCondition(() => reply);
+    const [pending] = f.opened;
+    assert.equal(pending.location.href, "https://chzzk.naver.com/video/4321");
+    reply({ ok: false, error: "quota" });
+    await waitForCondition(() => f.document.getElementById("message").textContent.includes("링크 저장 실패"));
+    assert.equal(pending.closed, false);
+    assert.equal(f.opened.length, 1);
+    assert.equal(f.link().getAttribute("href"), `https://chzzk.naver.com/${REPLAY_CHANNEL}/videos`);
+});
+
 test("Enter on a title that is still looking up its replay opens no second waiting tab", async (t) => {
     const f = await openReplayLookup(t, () => new Promise(() => {}));
     const link = f.link();

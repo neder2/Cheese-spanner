@@ -46,7 +46,7 @@ function createChrome({ saved, enabled = true, deferRead = false } = {}) {
             for (const fn of listeners) fn({ [KEY]: { newValue: value } }, "local");
         },
     };
-    return {
+    const chrome = {
         runtime,
         storage: {
             sync: {
@@ -89,6 +89,22 @@ function createChrome({ saved, enabled = true, deferRead = false } = {}) {
         },
         state,
     };
+    require("../shared/settings.js");
+    require("../shared/settingsBackup.js");
+    require("../shared/settingsStore.js");
+    const controller = globalThis.CheeseSpannerSettingsStore.createController({ chrome, withLock: (work) => work() });
+    runtime.sendMessage = (message, callback) =>
+        controller.handleMessage(
+            JSON.parse(JSON.stringify(message)),
+            {
+                id: runtime.id,
+                tab: { id: 1 },
+                frameId: 0,
+                url: "https://chzzk.naver.com/lives",
+            },
+            callback
+        );
+    return chrome;
 }
 
 // Web Locks keeps one holder per name across same-origin tabs; this fake grants requests in order.

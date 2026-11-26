@@ -237,7 +237,7 @@
     const BRAND_FILL = "var(--bct-brand)";
     const BRAND_SOFT = "var(--bct-brand-weak)";
     // 치지직 border-brand-alpha-base(브랜드 30%)에 맞는 공통 변수가 없어 브랜드 글자색을 섞어요.
-    const BRAND_LINE = "color-mix(in srgb,var(--bct-brand-text) 30%,transparent)";
+    const BRAND_LINE = "var(--bct-brand-border)";
     const FOCUS = "var(--bct-focus-ring)";
     const ON_BRAND = "var(--bct-on-brand)";
     const TEXT = "var(--bct-text)";
@@ -257,7 +257,7 @@
     const RADIUS_LG = "var(--bct-radius-lg)";
     const RADIUS_FULL = "var(--bct-radius-full)";
     // 라이브 점은 테마와 무관한 고정 색이에요.
-    const LIVE = "#ff4545";
+    const LIVE = "var(--bct-status-live)";
     const STYLE_TEXT = `
 #sidebar [${LIST_ATTR}="1"]{display:flex!important;flex-direction:column!important;align-items:stretch!important}
 #sidebar [${LIST_ATTR}="1"]>:not([${ORDER_ATTR}]){order:${MAX_ORDER + 1}!important}
@@ -316,7 +316,7 @@ ${ORDER_RULES}
 #sidebar [${STATUS_ATTR}] button{min-height:28px;margin:0;padding:0 12px;border:0;border-radius:${RADIUS_SM};background:${FIELD};color:${TEXT};font:inherit;font-weight:600;cursor:pointer}
 #sidebar [${STATUS_ATTR}] button:focus-visible{outline:2px solid ${FOCUS};outline-offset:2px}
 #sidebar [${STATUS_ATTR}] button[data-armed]{color:${DANGER};background-color:transparent;box-shadow:inset 0 0 0 1px ${DANGER}}
-#${LAYER_ID},#${TOAST_ID}{position:fixed;z-index:${FLOATING_Z_INDEX};box-sizing:border-box;border-radius:${RADIUS_LG};background-color:${SURFACE};box-shadow:${SHADOW},0 0 0 1px ${LINE};color:${TEXT};font-family:var(--bct-font);font-size:13px;line-height:1.5;text-align:start}
+#${LAYER_ID},#${TOAST_ID}{position:fixed;z-index:var(--bct-z-popover);box-sizing:border-box;border-radius:${RADIUS_LG};background-color:${SURFACE};box-shadow:${SHADOW},0 0 0 1px ${LINE};color:${TEXT};font-family:var(--bct-font);font-size:13px;line-height:1.5;text-align:start}
 #${LAYER_ID} *,#${TOAST_ID} *{box-sizing:border-box}
 #${LAYER_ID} :is(h2,h3,p,ul,ol){margin:0;padding:0}
 #${LAYER_ID} button{display:flex;align-items:center;gap:10px;margin:0;border:0;background:transparent;color:inherit;font:inherit;text-align:start;cursor:pointer}
@@ -1069,6 +1069,18 @@ ${ORDER_RULES}
         return [name];
     }
 
+    function markRenameFocusMove(event) {
+        if (!renaming || !event.isTrusted) return;
+        const input = currentRenameInput();
+        if (!input || document.activeElement !== input) return;
+        if (event.type === "keydown" ? event.target !== input || event.key !== "Tab" : event.target === input) return;
+        const edit = renaming;
+        edit.focusMove = event;
+        setTimeout(() => {
+            if (edit.focusMove === event) edit.focusMove = null;
+        }, 0);
+    }
+
     function buildRenameInput(folder) {
         const input = el("input", "bcff-rename");
         input.type = "text";
@@ -1089,6 +1101,7 @@ ${ORDER_RULES}
         input.addEventListener("keydown", (event) => {
             // 입력 중인 글자가 치지직 페이지 단축키로 전달되지 않게 한다.
             event.stopPropagation();
+            if (!event.isTrusted) return;
             if (event.key === "Escape" && !event.isComposing) {
                 event.preventDefault();
                 cancelRename(true);
@@ -1099,7 +1112,9 @@ ${ORDER_RULES}
             submitRename();
         });
         input.addEventListener("keyup", (event) => event.stopPropagation());
-        input.addEventListener("blur", () => {
+        input.addEventListener("blur", (event) => {
+            if (!event.isTrusted || !renaming?.focusMove) return;
+            renaming.focusMove = null;
             // 다시 그리느라 빠진 입력칸이나 저장을 기다리는 동안의 초점 이동은 무시한다.
             setTimeout(() => {
                 if (!input.isConnected || renaming?.folderId !== folder.id || renaming.pending) return;
@@ -1441,6 +1456,11 @@ ${ORDER_RULES}
             return;
         }
         if (!missing.length || nativeExpandPending) return;
+        if (
+            featureOptions.followingListStateEnabled &&
+            CheeseSpanner.followingListState?.canExpandForFolder(scheduleSync) === false
+        )
+            return;
         const now = Date.now();
         nativeExpandClicks = nativeExpandClicks.filter((time) => now - time < NATIVE_EXPAND_WINDOW_MS);
         if (nativeExpandClicks.length >= NATIVE_EXPAND_LIMIT) return;
@@ -1456,11 +1476,14 @@ ${ORDER_RULES}
         if (button?.contains(event.target) && button.getAttribute("aria-expanded") === "true") nativeExpandHeld = true;
     }
 
-    function releaseNativeExpandHold() {
+    function releaseNativeExpandHold(userOpenedFolder = false) {
         nativeExpandHeld = false;
         nativeExpandPending = null;
         nativeExpandClicks = [];
         unreachableChannelIds = new Set();
+        if (featureOptions.followingListStateEnabled) {
+            CheeseSpanner.followingListState?.setFolderOpenOverride(userOpenedFolder);
+        }
     }
 
     function scheduleSync() {
@@ -1545,7 +1568,7 @@ ${ORDER_RULES}
     }
 
     function toggleFolder(folder) {
-        if (folder.collapsed) releaseNativeExpandHold();
+        if (folder.collapsed) releaseNativeExpandHold(true);
         sendCommand(
             { type: "setCollapsed", folderId: folder.id, collapsed: !folder.collapsed },
             { keepCollapseOnDisconnect: true }
@@ -2252,7 +2275,7 @@ ${ORDER_RULES}
         }
         // 잠깐 펼쳐 보여 준 접힌 폴더에 놓았으면 펼친 상태로 남긴다.
         if (spring === folder.id && folder.collapsed) {
-            releaseNativeExpandHold();
+            releaseNativeExpandHold(true);
             sendCommand({ type: "setCollapsed", folderId: folder.id, collapsed: false });
         }
         sendCommand(
@@ -2936,6 +2959,8 @@ ${ORDER_RULES}
         foldersGeneration += 1;
         stateStatus = "loading";
         removeStorageListener = folderStore.subscribe(handleStoredChange);
+        window.addEventListener("pointerdown", markRenameFocusMove, true);
+        window.addEventListener("keydown", markRenameFocusMove, true);
         window.addEventListener("dragstart", handleDragStart, true);
         window.addEventListener("dragend", handleDragEnd, true);
         window.addEventListener("dragenter", handleDragOver, true);
@@ -2952,6 +2977,8 @@ ${ORDER_RULES}
         lastRawValue = undefined;
         if (hasExtensionContext()) removeStorageListener?.();
         removeStorageListener = null;
+        window.removeEventListener("pointerdown", markRenameFocusMove, true);
+        window.removeEventListener("keydown", markRenameFocusMove, true);
         window.removeEventListener("dragstart", handleDragStart, true);
         window.removeEventListener("dragend", handleDragEnd, true);
         window.removeEventListener("dragenter", handleDragOver, true);

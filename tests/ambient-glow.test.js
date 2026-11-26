@@ -209,8 +209,8 @@ test("enabled glow surrounds the player, spills over chat and sidebar, and never
     // Same z-index as the native header container, appended last, so the header is lit too.
     assert.match(css, /z-index:10000;/);
     assert.equal(layer, f.doc.body.lastElementChild);
-    assert.match(css, /html\.theme_dark #cheese-spanner-ambient\{mix-blend-mode:screen\}/);
-    assert.match(css, /mix-blend-mode:multiply/);
+    assert.match(css, /mix-blend-mode:screen/);
+    assert.match(css, /@container style\(--bct-scheme:light\)\{\s*#cheese-spanner-ambient\{mix-blend-mode:multiply\}/);
 
     // 288px layer margin on every side (3x the 96px blur, doubled on 2026-10-08 so the light
     // reaches deeper into the sidebar on the left and the chat on the right).

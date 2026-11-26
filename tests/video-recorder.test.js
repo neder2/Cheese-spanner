@@ -11,6 +11,7 @@ const {
 
 require("../shared/settings.js");
 require("../shared/settingsBackup.js");
+require("../shared/recordingDirectory.js");
 require("../shared/recordingDownloads.js");
 
 const Recording = globalThis.CheeseSpannerRecordingDownloads;
@@ -31,8 +32,10 @@ ${MENU}</div>`;
 function createWorker(chrome, { held = false, now, directory } = {}) {
     const listeners = [];
     const permissions = { held };
+    const openedTabs = [];
     const workerChrome = {
         runtime: { id: chrome.runtime.id, getURL: (path) => `chrome-extension://${chrome.runtime.id}/${path}` },
+        tabs: { create: async ({ url }) => openedTabs.push(url) },
         storage: { sync: chrome.storage.sync },
         permissions: {
             contains(spec, callback) {
@@ -51,6 +54,7 @@ function createWorker(chrome, { held = false, now, directory } = {}) {
     return {
         controller,
         listeners,
+        openedTabs,
         permissions,
         determine(item) {
             const suggestions = [];
@@ -101,6 +105,7 @@ function fixture(
         const sender = {
             id: chrome.runtime.id,
             tab: { id: 7 },
+            documentId: "recording-document",
             frameId: 0,
             url: w.location.href,
             origin: "https://chzzk.naver.com",
@@ -395,6 +400,10 @@ test("download folder names stay relative, bounded and free of path tricks", () 
     assert.equal(normalize("a/./b/../c"), "a/b/c");
     assert.equal(normalize('bad<>:"|?*name.'), "badname");
     assert.equal(normalize("con/LPT1.txt/ok"), "_con/_LPT1.txt/ok");
+    assert.equal(normalize("영상/COM¹/Lpt² .clips/한\u202e글\u2069"), "영상/_COM¹/_Lpt² .clips/한글");
+    const longReserved = normalize("CON." + "a".repeat(56));
+    assert.equal(longReserved.length, 60);
+    assert.equal(normalize(longReserved), longReserved);
     assert.equal(normalize("a/b/c/d/e/f/g"), "a/b/c/d/e");
     assert.equal(normalize("x".repeat(80)).length, 60);
     assert.ok(normalize(Array.from({ length: 5 }, () => "y".repeat(60)).join("/")).length <= 120);
@@ -404,13 +413,23 @@ test("download folder names stay relative, bounded and free of path tricks", () 
     assert.equal(Settings.normalizeOptions({ videoRecorderFolder: "../녹화" }).videoRecorderFolder, "녹화");
 });
 
-test("chzzk pages may write only an already normalized recording folder through the settings store", () => {
-    assert.equal(SettingsBackup.validateStoreEntry("sync", "videoRecorderFolder", "치지직/녹화").ok, true);
-    assert.equal(SettingsBackup.validateStoreEntry("sync", "videoRecorderFolder", "").ok, true);
+test("folder choices are extension settings and Chzzk cannot write them", () => {
+    assert.equal(SettingsBackup.validateStoreEntry("sync", "videoRecorderFolder", "치지직/녹화").ok, false);
+    assert.equal(SettingsBackup.validateStoreEntry("sync", "videoRecorderFolder", "").ok, false);
     assert.equal(SettingsBackup.validateStoreEntry("sync", "videoRecorderFolder", "../녹화").ok, false);
     assert.equal(SettingsBackup.validateStoreEntry("sync", "videoRecorderFolder", 3).ok, false);
     assert.equal(SettingsBackup.validateStoreEntry("sync", "videoRecorderEnabled", false).ok, false);
     assert.equal(SettingsBackup.validateStoreEntry("local", "videoRecorderFolder", "a").ok, false);
+    const { backup } = SettingsBackup.createBackup({
+        syncData: { videoRecorderFolder: "치지직/녹화" },
+        extensionVersion: "1.4.9",
+    });
+    assert.equal(backup.sync.options.videoRecorderFolder, "치지직/녹화");
+    assert.equal(SettingsBackup.parseBackup(backup).backup.sync.options.videoRecorderFolder, "치지직/녹화");
+    backup.sync.options.videoRecorderFolder = "클립/LPT²/한\u200e글";
+    assert.equal(SettingsBackup.parseBackup(backup).backup.sync.options.videoRecorderFolder, "클립/_LPT²/한글");
+    backup.sync.options.videoRecorderFolder = "../녹화";
+    assert.equal(SettingsBackup.parseBackup(backup).ok, false);
 });
 
 test("recording defaults off and enabling the button still waits for a user click", async (t) => {
@@ -544,7 +563,7 @@ test("the record button streams MP4 to the download folder during recording and 
     assert.equal(h.w.CheeseSpanner.videoRecorder.isRecording(), true);
     assert.equal(h.downloads.length, 1, "download opens before recording data arrives");
     const download = h.downloads[0];
-    assert.equal(download.connected, true);
+    assert.equal(download.connected, false, "the attachment link stays outside the shared page DOM");
     assert.match(download.href, /recording-download\.txt\?id=/);
     assert.match(download.download, new RegExp(`^\\d{4}-\\d\\d-\\d\\d 오늘 방송 - 테스트 스트리머\\.mp4$`));
     assert.equal(download.response.headers.get("Content-Type"), "video/mp4");
@@ -888,56 +907,45 @@ test("one large native Blob does not remove the backlog bound or allow a second 
     }
 });
 
-test("the gear menu opens a directory picker only on a trusted press and preserves synced settings", async (t) => {
+test("the gear menu opens extension folder settings only on trusted input and preserves synced settings", async (t) => {
     const h = fixture(t);
     await ready(h);
-    await waitForCondition(() => h.doc.getElementById("cheese-spanner-video-recorder-folder-row"));
     const row = h.doc.getElementById("cheese-spanner-video-recorder-folder-row");
     const button = row.querySelector('[role="menuitem"]');
-    assert.equal(button.getAttribute("aria-haspopup"), "dialog");
-    let calls = 0;
-    h.w.showDirectoryPicker = async (options) => {
-        calls++;
-        assert.equal(options.mode, "readwrite");
-        return { name: "선택 폴더", queryPermission: async () => "granted" };
-    };
+    h.w.showDirectoryPicker = () => assert.fail("the site must not receive a directory grant");
     button.click();
-    await waitForAsyncCallbacks();
-    assert.equal(calls, 0);
+    assert.equal(h.worker.openedTabs.length, 0);
     h.click(button);
-    await waitForCondition(() => row.textContent.includes("선택 폴더"));
-    assert.equal(calls, 1);
+    await waitForCondition(() => h.worker.openedTabs.length === 1);
+    assert.deepEqual(h.worker.openedTabs, [`chrome-extension://${h.chrome.runtime.id}/options.html#recording-folder`]);
+    await waitForAsyncCallbacks();
+    dispatchTrusted(button, new h.w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await waitForCondition(() => h.worker.openedTabs.length === 2);
     assert.equal(h.recorders.length, 0);
     assert.equal(h.chrome.testState.runtimeMessages.filter((m) => m?.type === SETTINGS_STORE).length, 0);
-    h.w.showDirectoryPicker = async () => {
-        throw new h.w.DOMException("Cancelled", "AbortError");
-    };
-    h.click(button);
-    await waitForCondition(() => !row.textContent.includes("선택 중"));
-    assert.ok(row.textContent.includes("선택 폴더"));
 });
 
-test("a late directory picker result cannot update a removed or replacement menu", async (t) => {
+test("a late folder-settings failure cannot update a replacement menu", async (t) => {
     const h = fixture(t);
     await ready(h);
-    await waitForCondition(() => h.doc.getElementById("cheese-spanner-video-recorder-folder-row"));
     let finish;
-    h.w.showDirectoryPicker = () =>
-        new Promise((resolve) => {
-            finish = resolve;
-        });
+    const original = h.chrome.runtime.sendMessage;
+    h.chrome.runtime.sendMessage = (message, callback) => {
+        if (message.op === "folder-settings") finish = callback;
+        else original(message, callback);
+    };
     const row = h.doc.getElementById("cheese-spanner-video-recorder-folder-row");
     h.click(row.querySelector('[role="menuitem"]'));
     assert.equal(typeof finish, "function");
     h.doc.querySelector(".pzp-pc__settings").remove();
     await waitForCondition(() => !row.isConnected);
-    await waitForAsyncCallbacks();
     h.doc.querySelector(".pzp-pc").insertAdjacentHTML("beforeend", MENU);
     await waitForCondition(() => h.doc.getElementById("cheese-spanner-video-recorder-folder-row"));
-    finish({ name: "늦은 폴더", queryPermission: async () => "granted" });
+    finish({ ok: false });
     await waitForAsyncCallbacks();
     const replacement = h.doc.getElementById("cheese-spanner-video-recorder-folder-row");
     assert.equal(replacement.querySelector(".pzp-ui-setting-home-item__value").textContent, "다운로드 폴더");
+    assert.ok(!h.status()?.textContent.includes("설정 열기 실패"));
     assert.equal(h.recorders.length, 0);
 });
 
@@ -947,6 +955,7 @@ test("the worker accepts recorder requests only from a top chzzk frame of this e
     const good = {
         id: chrome.runtime.id,
         tab: { id: 1 },
+        documentId: "recording-document",
         frameId: 0,
         url: "https://chzzk.naver.com/live/x",
         origin: "https://chzzk.naver.com",
@@ -1017,7 +1026,13 @@ test("remembered blobs expire and stay bounded", async () => {
         },
     });
     controller.install();
-    const sender = { id: chrome.runtime.id, tab: { id: 1 }, frameId: 0, url: "https://chzzk.naver.com/live/x" };
+    const sender = {
+        id: chrome.runtime.id,
+        tab: { id: 1 },
+        documentId: "recording-document",
+        frameId: 0,
+        url: "https://chzzk.naver.com/live/x",
+    };
     const url = (i) => `blob:https://chzzk.naver.com/00000000-0000-0000-0000-${String(i).padStart(12, "0")}`;
     const determine = (item) => {
         const out = [];
@@ -1068,7 +1083,13 @@ function streamFixture(options) {
 
 test("stream downloads bind writes to the starting tab and document and reject page fetches and replays", async () => {
     const h = streamFixture();
-    assert.equal((await h.send({ op: "start", fileName: "../a.mp4" })).error, "invalid-request");
+    for (const fileName of ["../a.mp4", "CON.mp4", "Nul.txt.webm", "방송\u202e.mp4"])
+        assert.equal((await h.send({ op: "start", fileName })).error, "invalid-request");
+    for (const sender of [
+        { ...h.sender, documentId: undefined },
+        { ...h.sender, tab: { ...h.sender.tab, incognito: true } },
+    ])
+        assert.equal((await h.send({ op: "start", fileName: "방송.mp4" }, sender)).error, "untrusted-sender");
     assert.equal(
         (await h.send({ op: "start", fileName: "a.mp4" }, { ...h.sender, frameId: 1 })).error,
         "untrusted-sender"

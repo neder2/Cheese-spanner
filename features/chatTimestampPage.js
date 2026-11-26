@@ -11,8 +11,9 @@
  *   채팅 도구가 요청하면 가장 가까운 chatMessage의 key·user·time·profile을 검증해 제한된 식별값을
  *   data-bcct-source-message에, 지원되는 블라인드 상태의 originalContent를 data-bcct-source-original에 기록한다.
  *   라이브 안내가 표시된 행은 같은 방송의 네이티브 채팅 목록에서 같은 메시지의 최신 상태와 원문을 확인한다.
- *   불완전한 메시지는 null로 답하고 NORMAL의 원문은 보내지 않는다. 블라인드 옵션이 켜졌을 때만
- *   화면과 일치하는 일반 채팅 원문을 MAIN 메모리에 보관해, 이후 같은 메시지의 원문이 비면 사용한다.
+ *   같은 스냅샷의 역할·인증과 화면에 본문을 표시하는 NORMAL·CBOTBLIND의 대조 자료를 전달한다.
+ *   불완전한 메시지는 null로 답하고 블라인드 원문 속성은 라이브의 지원 상태에서만 기록한다.
+ *   블라인드 옵션이 켜졌을 때만 화면과 일치하는 일반 채팅 원문을 MAIN 메모리에 보관한다.
  * 통신: cheese-spanner:chat-timestamp-source-request·cheese-spanner:chat-user-source-request·
  *   cheese-spanner:chat-blind-source-request 이벤트의 target,
  *   data-bcmt-source-time·data-bcoc-source-user·data-bcct-source-message·data-bcct-source-original DOM 속성,
@@ -44,6 +45,22 @@
         "클린봇이 부적절한 표현을 감지했습니다.",
     ]);
     const MAX_ORIGINAL_LENGTH = 2000;
+    const MAX_SOURCE_LENGTH = 32768;
+    const MAX_NORMAL_EMOJIS = 64;
+    const MAX_EMOJI_URL_LENGTH = 2048;
+    const MESSAGE_ROLE_CODES = new Set([
+        "streamer",
+        "streaming_channel_manager",
+        "streaming_chat_manager",
+        "manager",
+        "common_user",
+    ]);
+    const VERIFIED_MARK_TYPES = new Set(["PARTNER", "CHALLENGER", "OFFICIAL"]);
+    const EMOJI_URL_PREFIXES = [
+        "https://ssl.pstatic.net/static/nng/glive/",
+        "https://nng-phinf.pstatic.net/",
+        "https://beta-nng.ssl.phinf.net/",
+    ];
     const MAX_CACHED_ORIGINALS = 500;
     const PAGE_READY_EVENT = "cheese-spanner:chat-timestamp-page-ready";
     const SOURCE_TIME_ATTR = "data-bcmt-source-time";
@@ -90,6 +107,93 @@
         return object && typeof object === "object" ? Object.getOwnPropertyDescriptor(object, key)?.value : undefined;
     }
 
+    function readMetadataField(profile, key) {
+        const descriptor = Object.getOwnPropertyDescriptor(profile, key);
+        return {
+            value: descriptor?.value,
+            invalid: Boolean(descriptor && !Object.prototype.hasOwnProperty.call(descriptor, "value")),
+        };
+    }
+
+    function readRoleMetadata(profile) {
+        const role = readMetadataField(profile, "userRoleCode");
+        const code = typeof role.value === "string" ? role.value.toLowerCase() : null;
+        const roleMissing = role.value == null || (typeof role.value === "string" && !role.value.trim());
+        const roleState = role.invalid
+            ? "invalid"
+            : roleMissing
+              ? "missing"
+              : MESSAGE_ROLE_CODES.has(code)
+                ? "known"
+                : "invalid";
+        const mark = readMetadataField(profile, "verifiedMark");
+        const type = readMetadataField(profile, "verifiedMarkType");
+        const grade = typeof type.value === "string" ? type.value : null;
+        const hasGrade = VERIFIED_MARK_TYPES.has(grade);
+        const invalidMark = mark.invalid || (mark.value !== undefined && typeof mark.value !== "boolean");
+        const invalidType =
+            type.invalid || (type.value !== undefined && type.value !== null && grade !== "" && !hasGrade);
+        const verifiedState =
+            invalidMark || invalidType || (hasGrade && mark.value === false)
+                ? "invalid"
+                : hasGrade || type.value === null || typeof mark.value === "boolean"
+                  ? "known"
+                  : "missing";
+        return {
+            roleCode: roleState === "known" ? code : null,
+            roleState,
+            verifiedMarkType: verifiedState === "known" && hasGrade ? grade : null,
+            verifiedMark: verifiedState === "known" && typeof mark.value === "boolean" ? mark.value : null,
+            verifiedState,
+        };
+    }
+
+    function readEmojiField(object, key) {
+        if (!object || typeof object !== "object") return { invalid: true };
+        const descriptor = Object.getOwnPropertyDescriptor(object, key);
+        if (!descriptor) {
+            const prototype = Object.getPrototypeOf(object);
+            // Native message maps are plain records. A custom inherited mapping cannot confirm the DOM body.
+            return { missing: true, invalid: prototype !== Object.prototype && key in object };
+        }
+        if (!Object.prototype.hasOwnProperty.call(descriptor, "value")) return { invalid: true };
+        return { value: descriptor.value };
+    }
+
+    function readNormalEmojis(message, normalText) {
+        if (normalText === null) return null;
+        const tokens = new Set(normalText.match(/\{:\w+:\}/g) || []);
+        if (tokens.size > MAX_NORMAL_EMOJIS) return null;
+        const result = Object.create(null);
+        if (!tokens.size) return result;
+        const extras = readEmojiField(message, "extras");
+        if (extras.invalid) return null;
+        if (extras.value == null) return result;
+        const emojis = readEmojiField(extras.value, "emojis");
+        if (emojis.invalid) return null;
+        if (emojis.value == null) return result;
+        for (const token of tokens) {
+            const field = readEmojiField(emojis.value, token.slice(2, -2));
+            if (field.invalid) return null;
+            // The native renderer leaves absent tokens and empty URLs as literal text.
+            // Unreadable mappings remain null: they must not confirm a literal DOM body.
+            if (field.missing || field.value === "") continue;
+            const url = field.value;
+            if (
+                typeof url !== "string" ||
+                url.length > MAX_EMOJI_URL_LENGTH ||
+                !EMOJI_URL_PREFIXES.some((prefix) => url.startsWith(prefix))
+            )
+                return null;
+            for (let index = 0; index < url.length; index += 1) {
+                const code = url.charCodeAt(index);
+                if (code <= 0x20 || code === 0x7f) return null;
+            }
+            result[token] = url;
+        }
+        return result;
+    }
+
     function readBlindMessage(message) {
         const key = ownValue(message, "key");
         const user = normalizeUserHash(ownValue(message, "user"));
@@ -110,13 +214,23 @@
             nickname.length > 200
         )
             return null;
+        const original = ownValue(message, "originalContent");
+        const normalText =
+            (status === NORMAL_MESSAGE_STATUS || status === "CBOTBLIND") &&
+            typeof original === "string" &&
+            original.length <= MAX_ORIGINAL_LENGTH
+                ? original
+                : null;
         return {
             key,
             user,
             time,
             status,
             nickname,
-            original: normalizeOriginal(ownValue(message, "originalContent")),
+            original: normalizeOriginal(original),
+            ...readRoleMetadata(profile),
+            normalText,
+            normalEmojis: readNormalEmojis(message, normalText),
         };
     }
 
@@ -127,10 +241,14 @@
 
     function readVisibleChat(detail) {
         // A string crosses worlds without sharing a mutable JavaScript object.
-        if (typeof detail !== "string" || detail.length > 4500) return null;
+        if (typeof detail !== "string" || detail.length > MAX_SOURCE_LENGTH) return null;
         try {
             const value = JSON.parse(detail);
-            return Array.isArray(value) && value.length === 2 && value.every((part) => typeof part === "string")
+            return Array.isArray(value) &&
+                (value.length === 2 || (value.length === 3 && typeof value[2] === "boolean")) &&
+                typeof value[0] === "string" &&
+                value[0].length <= 200 &&
+                typeof value[1] === "string"
                 ? value
                 : null;
         } catch (_) {
@@ -146,7 +264,7 @@
         if (!snapshot) return null;
         const blinded = snapshot.status !== NORMAL_MESSAGE_STATUS;
         const original = blinded ? snapshot.original : null;
-        if (!matchesVisibleAuthor(snapshot, visible)) return original;
+        if (!matchesVisibleAuthor(snapshot, visible) || visible[2] === false) return original;
 
         if (cachedOriginalsPath !== path) {
             clearBlindOriginals();
@@ -241,16 +359,23 @@
         return null;
     }
 
-    function getRequestChatLog(messageContainer) {
+    function getRequestChatLog(messageContainer, allowStructure = false) {
         if (!(messageContainer instanceof Element)) return null;
         const chatLogSelector = LIVE_ROUTE_RE.test(location.pathname)
             ? LIVE_CHAT_LOG_SELECTOR
             : VOD_ROUTE_RE.test(location.pathname)
               ? VOD_CHAT_LOG_SELECTOR
               : "";
-        if (!chatLogSelector || !messageContainer.matches(MESSAGE_CONTAINER_SELECTOR)) return null;
+        if (!chatLogSelector) return null;
         const chatLog = messageContainer.closest(chatLogSelector);
-        return chatLog instanceof Element ? chatLog : null;
+        if (!chatLog || messageContainer === chatLog) return null;
+        if (messageContainer.matches(MESSAGE_CONTAINER_SELECTOR)) return chatLog;
+        if (!allowStructure) return null;
+        const nickname = messageContainer.querySelector(':scope > button[class*="_nickname_"][aria-haspopup="true"]');
+        const body = messageContainer.querySelector(':scope > span[class*="_text_"]');
+        return nickname && body && nickname.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING
+            ? chatLog
+            : null;
     }
 
     function writeSource(messageContainer, attribute, value) {
@@ -277,24 +402,24 @@
 
     function handleBlindRequest(event) {
         const messageContainer = event.target;
-        const chatLog = getRequestChatLog(messageContainer);
+        const chatLog = getRequestChatLog(messageContainer, true);
         if (!chatLog) return;
         const path = location.pathname;
-        const visible = LIVE_ROUTE_RE.test(path) ? readVisibleChat(event.detail) : null;
-        const channelId = visible ? path.split("/")[2] : "";
+        const isLive = LIVE_ROUTE_RE.test(path);
+        const visible = readVisibleChat(event.detail);
+        const channelId = isLive && visible ? path.split("/")[2] : "";
         const message = findNearestMessage(messageContainer, chatLog);
         const row = readBlindMessage(message);
         let latest = null;
         let snapshot = row;
-        if (row && matchesVisibleAuthor(row, visible) && NATIVE_BLIND_NOTICES.has(visible[1])) {
+        if (isLive && row && matchesVisibleAuthor(row, visible) && NATIVE_BLIND_NOTICES.has(visible[1])) {
             // On a post-display blind, React can update the notice while the host props still say NORMAL.
             latest = findLatestLiveMessage(chatLog, channelId, row);
             if (latest) snapshot = readBlindMessage(latest.message);
         }
         if (
-            !messageContainer.isConnected ||
-            getRequestChatLog(messageContainer) !== chatLog ||
-            location.pathname !== path ||
+            (event.detail != null && !visible) ||
+            (row && visible && !matchesVisibleAuthor(row, visible)) ||
             findNearestMessage(messageContainer, chatLog) !== message ||
             JSON.stringify(readBlindMessage(message)) !== JSON.stringify(row) ||
             (latest &&
@@ -303,17 +428,33 @@
                     !matchesVisibleAuthor(snapshot, visible) ||
                     getLiveMessageList(chatLog, channelId) !== latest.list ||
                     ownValue(latest.list, latest.index) !== latest.message ||
-                    JSON.stringify(readBlindMessage(latest.message)) !== JSON.stringify(snapshot)))
+                    JSON.stringify(readBlindMessage(latest.message)) !== JSON.stringify(snapshot))) ||
+            !messageContainer.isConnected ||
+            getRequestChatLog(messageContainer, true) !== chatLog ||
+            location.pathname !== path
         )
             snapshot = null;
-        writeSource(messageContainer, SOURCE_ORIGINAL_ATTR, originalForReply(snapshot, path, visible));
+        writeSource(messageContainer, SOURCE_ORIGINAL_ATTR, isLive ? originalForReply(snapshot, path, visible) : null);
+        // 클린봇을 끈 행은 본문을 표시한다. 안내 화면에서는 기존 원문 복구 경계만 사용한다.
+        const compareBody = snapshot?.status !== "CBOTBLIND" || (visible && !NATIVE_BLIND_NOTICES.has(visible[1]));
         const identity = snapshot && {
             key: snapshot.key,
             user: snapshot.user,
             time: snapshot.time,
             status: snapshot.status,
             nickname: snapshot.nickname,
+            roleCode: snapshot.roleCode,
+            roleState: snapshot.roleState,
+            verifiedMarkType: snapshot.verifiedMarkType,
+            verifiedMark: snapshot.verifiedMark,
+            verifiedState: snapshot.verifiedState,
+            normalText: compareBody ? snapshot.normalText : null,
+            normalEmojis: compareBody ? snapshot.normalEmojis : null,
         };
+        if (identity && JSON.stringify(identity).length > MAX_SOURCE_LENGTH) {
+            identity.normalText = null;
+            identity.normalEmojis = null;
+        }
         // Even an invalid page message answers explicitly, preventing fallback to unrelated DOM text.
         writeSource(messageContainer, SOURCE_MESSAGE_ATTR, JSON.stringify(identity));
     }

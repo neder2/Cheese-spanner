@@ -30,11 +30,6 @@
     const RECENT_MEDIA_CHANGE_MS = 40;
     const NATIVE_SPACE_GUARD_MS = 140;
     const EXTERNAL_STATE_RESTORE_LIMIT = 5;
-    const SPACE_CONSUMER_SELECTOR =
-        "button, input, textarea, select, summary, a[href], [contenteditable]:not([contenteditable='false']), " +
-        "[role='button'], [role='link'], [role='checkbox'], [role='menuitem'], [role='option'], " +
-        "[role='radio'], [role='slider'], [role='switch'], [role='tab'], [role='textbox'], " +
-        "[role='combobox'], [role='searchbox'], [role='spinbutton'], [role='treeitem']";
 
     const {
         bindFeatureOptions,
@@ -44,6 +39,7 @@
         injectStyleOnce,
         isLiveRoute,
         isNativeAdBreakActive,
+        isSpaceConsumerTarget,
         isPlaybackRoute,
         isVodMultiviewInput,
         startPageChangeDetection,
@@ -75,10 +71,6 @@
     function stopKeyboardEvent(event) {
         event.preventDefault();
         event.stopImmediatePropagation();
-    }
-
-    function isSpaceConsumerTarget(target) {
-        return target instanceof Element && Boolean(target.closest(SPACE_CONSUMER_SELECTOR));
     }
 
     function getPlaybackRouteKey() {

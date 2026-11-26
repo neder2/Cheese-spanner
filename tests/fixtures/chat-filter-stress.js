@@ -9,6 +9,7 @@
         sentinel.className = "_list_bottom_tdctj_154";
     }
     const roles = { broadcaster: "방송자", manager: "운영자", partner: "파트너", challenger: "챌린저" };
+    const roomRoleCodes = { broadcaster: "streamer", manager: "streaming_chat_manager" };
     const normalTexts = ["안녕하세요!", "오늘 방송 재밌네요", "오 좋네요", "ㅋㅋㅋㅋ", "반갑습니다"];
     const nodes = new Map();
     const messagesForNodes = new WeakMap();
@@ -65,6 +66,24 @@
         const name = document.createElement("span");
         name.className = "_nickname_1pcsq_1";
         name.textContent = message.target ? "검증 계정" : "시청자";
+        const user = message.target ? "fixture-target" : "fixture-viewer";
+        const grade = message.role === "partner" || message.role === "challenger" ? message.role.toUpperCase() : null;
+        // The MAIN bridge reads the same message that this fixture renders into the row.
+        const chatMessage = {
+            key: message.key,
+            user,
+            time: message.time,
+            status: "NORMAL",
+            originalContent: message.text,
+            profile: {
+                nickname: name.textContent,
+                userIdHash: user,
+                userRoleCode: roomRoleCodes[message.role] || "common_user",
+                verifiedMark: Boolean(grade),
+                verifiedMarkType: grade,
+            },
+        };
+        container.__reactProps$stress = { children: { props: { chatMessage } } };
         author.append(name);
         container.append(author);
         if (message.role === "broadcaster" || message.role === "manager") {
@@ -122,6 +141,8 @@
     }
 
     function push(batch) {
+        const receivedAt = Date.now();
+        for (const message of batch) message.time = receivedAt;
         messages = [...batch].reverse().concat(messages).slice(0, 500);
         render();
         const raw = document.getElementById("raw");

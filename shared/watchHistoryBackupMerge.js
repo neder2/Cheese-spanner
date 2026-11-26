@@ -91,7 +91,7 @@
         const out = [];
         for (const row of rows) {
             const last = out[out.length - 1];
-            if (last && row.startAt <= last.endAt + 2000 && row.endAt - last.startAt <= 366 * 86400000)
+            if (last && row.startAt <= last.endAt && row.endAt - last.startAt <= 366 * 86400000)
                 last.endAt = Math.max(last.endAt, row.endAt);
             else out.push({ ...row });
         }
@@ -110,16 +110,12 @@
     function incompatibleRangeGrowth(before, incoming, mergedRanges) {
         const a = rangeTotals(before.watchedRanges || []);
         const b = rangeTotals(incoming.watchedRanges || []);
-        const exact = rangeTotals([...(before.watchedRanges || []), ...(incoming.watchedRanges || [])]);
         const merged = rangeTotals(mergedRanges);
-        // Retain pre-existing range rounding and 2-second bridges, but reject a union that invents
-        // extra watched intervals beyond the absolute counter's growth and newly bridged gaps.
+        // Legacy ranges may already contain pauses. Compare growth against the original ranges
+        // and the absolute counters, allowing one second for rounded counters.
         if (
             merged.seconds >
-            Math.max(a.seconds, b.seconds) +
-                Math.abs(before.watchedSeconds - incoming.watchedSeconds) +
-                (merged.seconds - exact.seconds) +
-                1
+            Math.max(a.seconds, b.seconds) + Math.abs(before.watchedSeconds - incoming.watchedSeconds) + 1
         )
             return true;
         for (const [date, seconds] of Object.entries(merged.daily)) {
@@ -127,7 +123,6 @@
                 seconds >
                 Math.max(a.daily[date] || 0, b.daily[date] || 0) +
                     Math.abs((before.dailySeconds[date] || 0) - (incoming.dailySeconds[date] || 0)) +
-                    (seconds - (exact.daily[date] || 0)) +
                     1
             )
                 return true;

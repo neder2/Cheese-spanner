@@ -104,7 +104,7 @@
     }
 
     function getLiveChannelIdFromUrl() {
-        return getLiveChannelIdFromPath();
+        return CheeseSpanner.utils.normalizeChzzkChannelId(getLiveChannelIdFromPath());
     }
 
     function isLiveRoute() {
@@ -253,6 +253,7 @@
         for (const key of ["channelId", "liveId", "channelName", "title", "thumbnailUrl", "liveOpenDate"]) {
             const value = compactSpaces(metadata[key]);
             if (!value) continue;
+            if (key === "channelName" && !persistTitle) continue;
             if (key === "title") {
                 const title = cleanEntryTitle(value, nextChannelName);
                 if (title && persistTitle) {
@@ -485,7 +486,7 @@
         current.pendingRecordMigrationSource = sourceRecordId;
         current.pendingRecordMigrationTarget = targetRecordId;
         try {
-            await sendWatchHistoryMutation({
+            const result = await sendWatchHistoryMutation({
                 kind: "migrateRecordId",
                 sourceRecordId,
                 targetRecordId,
@@ -494,7 +495,13 @@
                 current.pendingRecordMigrationSource === sourceRecordId &&
                 current.pendingRecordMigrationTarget === targetRecordId
             ) {
-                current.recordId = targetRecordId;
+                if (result.status === "ignored") {
+                    current.recordId = sourceRecordId;
+                    // An in-flight first snapshot can still establish the provisional record.
+                    if (result.reason === "missing-source") return;
+                } else {
+                    current.recordId = targetRecordId;
+                }
                 current.pendingRecordMigrationSource = "";
                 current.pendingRecordMigrationTarget = "";
             }

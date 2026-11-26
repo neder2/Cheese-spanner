@@ -193,7 +193,7 @@ function activityChat(id, nickname = "안내 담당", text = id) {
         chatId: id,
         nickname,
         text,
-        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         nicknameColor: "",
     });
 }
@@ -225,67 +225,232 @@ test("late native streamer marks collect once through the observer and render th
     assert.equal(unreadCount(document), 1);
 });
 
-// jsdom에는 레이아웃이 없으므로 40px 행 하나가 보이는 스크롤 목록을 모델링한다.
+for (const family of ["8bw0p", "1pcsq"]) {
+    const suffixes =
+        family === "8bw0p"
+            ? { mark: 75, partner: 75, challenger: 78, official: 81 }
+            : { mark: 81, partner: 81, challenger: 84, official: 87 };
+    for (const grade of ["partner", "challenger"]) {
+        for (const initialGrade of ["", "official"]) {
+            test(`class-only ${family} ${initialGrade || "empty"} to ${grade} mark collects through the observer`, async (t) => {
+                const markClass = `_mark_${family}_${suffixes.mark}`;
+                const initialClass = `${markClass} ${initialGrade ? `_is_${initialGrade}_${family}_${suffixes[initialGrade]}` : ""}`;
+                const { dom } = createPageDom(
+                    realChzzkChatRow({
+                        chatId: "late-mark",
+                        nickname: "방문자",
+                        text: "안녕하세요",
+                        badgeImg: `<i class="${initialClass}"><span class="blind">인증 마크</span></i>`,
+                    }),
+                    { chatKeywordFilterEnabled: Boolean(initialGrade), chatKeywordFilterWords: [] }
+                );
+                t.after(() => closeChatToolsDom(dom));
+                const document = dom.window.document;
+                loadChatTools(dom);
+                await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+                assert.equal(moderatorRows(document).length, 0);
+                const row = document.querySelector('[data-chat-id="late-mark"]');
+                const mark = row.querySelector("i");
+                mark.className = `${markClass} _is_${grade}_${family}_${suffixes[grade]}`;
+                assert.equal(dom.window.CheeseSpanner.chatTools.parser.parseChatRow(row).role, grade);
+                await waitForCondition(() => moderatorRows(document).length === 1);
+                assert.match(moderatorRows(document)[0].textContent, grade === "partner" ? /파트너/ : /챌린저/);
+                assert.equal(unreadCount(document), 1);
+                mark.classList.add("decoration");
+                // More than two chat sync windows: a decoration change must not add a duplicate.
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                assert.equal(moderatorRows(document).length, 1);
+                assert.equal(unreadCount(document), 1);
+            });
+        }
+    }
+}
+
+test("class-only verified marks still exclude body, popup, official and unsupported marks", async (t) => {
+    const placeholder = '<i class="_mark_1pcsq_81"><span class="blind">인증 마크</span></i>';
+    const { dom } = createPageDom(
+        realChzzkChatRow({ chatId: "body-mark", nickname: "방문자", text: `안녕하세요${placeholder}` }) +
+            realChzzkChatRow({
+                chatId: "popup-mark",
+                nickname: "방문자",
+                text: "안녕하세요",
+                badgeImg: `<div role="dialog">${placeholder}</div>`,
+            }) +
+            realChzzkChatRow({
+                chatId: "official-mark",
+                nickname: "방문자",
+                text: "안녕하세요",
+                badgeImg: placeholder,
+            }) +
+            realChzzkChatRow({ chatId: "unknown-mark", nickname: "방문자", text: "안녕하세요", badgeImg: placeholder }),
+        { chatKeywordFilterEnabled: false }
+    );
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    const cases = [
+        ["body-mark", "_mark_1pcsq_81 _is_partner_1pcsq_81"],
+        ["popup-mark", "_mark_1pcsq_81 _is_challenger_1pcsq_84"],
+        ["official-mark", "_mark_1pcsq_81 _is_official_1pcsq_87"],
+        ["unknown-mark", "_mark_unknown_81 _is_partner_unknown_81"],
+    ];
+    for (const [id, className] of cases) {
+        const row = document.querySelector(`[data-chat-id="${id}"]`);
+        row.querySelector("i").className = className;
+        assert.equal(dom.window.CheeseSpanner.chatTools.parser.parseChatRow(row).role, "", id);
+    }
+    // Wait beyond the observer's throttled scan; none of these marks belongs to a collectible author.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(moderatorRows(document).length, 0);
+    assert.equal(unreadCount(document), 0);
+});
+
+// jsdom에는 레이아웃이 없으므로 메시지 한 행이 보이는 목록과 그 안의 구분선을 모델링한다.
 function installModeratorViewport(dom) {
     const document = dom.window.document;
     const list = document.querySelector(".bcct-moderator-box__list");
-    const visibleRows = () => moderatorRows(document).filter((row) => !row.hidden);
+    const heightOf = (item) => (item.matches('[role="separator"]') ? 16 : 40);
+    function topOf(item) {
+        let top = 0;
+        for (const child of list.children) {
+            if (child === item) break;
+            if (!child.hidden) top += heightOf(child);
+        }
+        return top;
+    }
     let scrollTop = 0;
     Object.defineProperties(list, {
-        scrollHeight: { configurable: true, get: () => visibleRows().length * 40 },
+        scrollHeight: { configurable: true, get: () => topOf(null) },
         clientHeight: { configurable: true, get: () => 40 },
         scrollTop: {
             configurable: true,
             get: () => scrollTop,
             set: (value) => {
-                scrollTop = Math.max(0, Math.min(value, list.scrollHeight - 40));
+                scrollTop = Math.max(0, Math.min(value, list.scrollHeight - list.clientHeight));
             },
         },
     });
     const originalRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
     dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
         if (this === list) return { top: 100, bottom: 140, left: 10, right: 330, width: 320, height: 40 };
-        if (this.matches(".bcct-moderator-row")) {
-            const top = 100 + visibleRows().indexOf(this) * 40 - scrollTop;
-            return { top, bottom: top + 40, left: 10, right: 330, width: 320, height: 40 };
+        if (this.parentElement === list) {
+            const height = this.hidden ? 0 : heightOf(this);
+            const top = 100 + topOf(this) - scrollTop;
+            return { top, bottom: top + height, left: 10, right: 330, width: 320, height };
         }
         return originalRect.call(this);
     };
     return list;
 }
 
+test("reopening starts at the oldest unread message and keeps that divider in place while reading", async (t) => {
+    const { dom } = createPageDom(activityChat("already-read"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    const list = installModeratorViewport(dom);
+    const trigger = openModeratorPanel(document);
+    await waitForCondition(() => unreadCount(document) === 0);
+    trigger.click();
+    const source = document.querySelector(".chat-list");
+    source.insertAdjacentHTML("beforeend", activityChat("first-new") + activityChat("second-new"));
+    await waitForCondition(() => unreadCount(document) === 2);
+    trigger.click();
+    const divider = list.querySelector('[role="separator"]');
+    assert.ok(divider);
+    assert.equal(divider.textContent, "새 메시지");
+    assert.equal(divider.getAttribute("aria-label"), "새 메시지");
+    assert.equal(divider.nextElementSibling, moderatorRows(document)[1]);
+    assert.equal(divider.getBoundingClientRect().top, list.getBoundingClientRect().top);
+    await waitForCondition(() => unreadCount(document) === 1);
+    assert.equal(divider.nextElementSibling.dataset.unread, "0", "reading the first new row keeps the divider");
+
+    // A new arrival while near (but not at) the bottom must not skip the next unread row.
+    list.scrollTop += 20;
+    list.dispatchEvent(new dom.window.Event("scroll"));
+    const readingPosition = list.scrollTop;
+    source.insertAdjacentHTML("beforeend", activityChat("third-new"));
+    await waitForCondition(() => moderatorRows(document).length === 4);
+    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
+    assert.equal(list.scrollTop, readingPosition);
+    assert.equal(unreadCount(document), 2);
+    assert.equal(list.querySelectorAll('[role="separator"]').length, 1);
+    assert.equal(divider.nextElementSibling, moderatorRows(document)[1]);
+
+    trigger.click();
+    trigger.click();
+    await waitForCondition(() => unreadCount(document) === 1);
+    assert.equal(list.querySelector('[role="separator"]').nextElementSibling, moderatorRows(document)[2]);
+    assert.equal(list.scrollTop, 80);
+    document.querySelector(".bcct-moderator-bottom").click();
+    await waitForCondition(() => unreadCount(document) === 0);
+    trigger.click();
+    trigger.click();
+    assert.equal(list.querySelector('[role="separator"]'), null);
+    assert.equal(list.scrollTop, list.scrollHeight - list.clientHeight);
+});
+
+test("a panel opened before the first collection starts with the oldest message in that batch", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    const list = installModeratorViewport(dom);
+    openModeratorPanel(document);
+    assert.equal(list.querySelector('[role="separator"]'), null);
+    document.querySelector(".chat-list").insertAdjacentHTML("beforeend", activityChat("first") + activityChat("last"));
+    await waitForCondition(() => unreadCount(document) === 1 && moderatorRows(document).length === 2);
+    const [first, last] = moderatorRows(document);
+    assert.equal(list.querySelector('[role="separator"]').nextElementSibling, first);
+    assert.equal(first.dataset.unread, "0");
+    assert.equal(last.dataset.unread, "1");
+    assert.equal(list.scrollTop, 0);
+});
+
 test("identified authors show unread counts and only visible filtered messages are acknowledged", async (t) => {
     const { dom } = createPageDom(
-        activityChat("a1", "첫 운영자") + activityChat("a2", "첫 운영자") + activityChat("b1", "둘째 운영자")
+        activityChat("a1", "첫 운영자") +
+            activityChat("b1", "둘째 운영자") +
+            activityChat("a2", "첫 운영자") +
+            activityChat("a3", "첫 운영자")
     );
     t.after(() => closeChatToolsDom(dom));
     const document = dom.window.document;
     loadChatTools(dom);
-    await waitForCondition(() => moderatorRows(document).length === 3);
+    await waitForCondition(() => moderatorRows(document).length === 4);
     assert.deepEqual(
         authorButtons(document).map((button) => button.firstElementChild.textContent),
         ["전체", "첫 운영자", "둘째 운영자"]
     );
-    assert.equal(unreadCount(document), 3);
+    assert.equal(unreadCount(document), 4);
     assert.equal(document.querySelector(".bcct-moderator-trigger").dataset.unread, "1");
     const list = installModeratorViewport(dom);
     openModeratorPanel(document);
-    await waitForCondition(() => unreadCount(document) === 2);
+    await waitForCondition(() => unreadCount(document) === 3);
     assert.match(authorButton(document, "첫 운영자").getAttribute("aria-label"), /미확인 2개/);
-    assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 0개/);
+    assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 1개/);
 
     authorButton(document, "첫 운영자").click();
-    await waitForCondition(() => unreadCount(document) === 1);
-    assert.equal(moderatorRows(document).filter((row) => !row.hidden).length, 2);
-    list.scrollTop = 0;
+    await waitForCondition(() => unreadCount(document) === 2);
+    assert.equal(moderatorRows(document).filter((row) => !row.hidden).length, 3);
+    assert.equal(list.querySelector('[role="separator"]').nextElementSibling, moderatorRows(document)[2]);
+    assert.equal(list.scrollTop, 40, "the first unread row of this author starts the filtered view");
+    list.scrollTop = list.scrollHeight;
     list.dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => unreadCount(document) === 1);
+    assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 1개/);
+    authorButton(document, "둘째 운영자").click();
     await waitForCondition(() => unreadCount(document) === 0);
     assert.equal(document.querySelector(".bcct-moderator-trigger__count").dataset.empty, "1");
     assert.equal(document.querySelector(".bcct-moderator-trigger").dataset.unread, "0");
-    assert.equal(document.querySelector(".bcct-moderator-box__count").textContent, "3");
+    assert.equal(document.querySelector(".bcct-moderator-box__count").textContent, "4");
 
+    authorButton(document, "첫 운영자").click();
     document.querySelector(".chat-list").insertAdjacentHTML("beforeend", activityChat("b2", "둘째 운영자"));
-    await waitForCondition(() => moderatorRows(document).length === 4);
+    await waitForCondition(() => moderatorRows(document).length === 5);
     await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
     assert.equal(unreadCount(document), 1, "a hidden author's new message stays unread while the panel is open");
     assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 1개/);
@@ -307,16 +472,17 @@ test("bottom chevron appears only above the bottom and does not acknowledge unse
     assert.ok(button.querySelector("svg path"));
     openModeratorPanel(document);
     await waitForCondition(() => unreadCount(document) === 2);
-    assert.equal(list.scrollTop, 80);
-    assert.equal(button.hidden, true);
-    list.scrollTop = 0;
-    list.dispatchEvent(new dom.window.Event("scroll"));
-    await waitForCondition(() => !button.hidden && unreadCount(document) === 1);
+    assert.equal(list.scrollTop, 0);
+    assert.equal(button.hidden, false);
     button.click();
-    assert.equal(list.scrollTop, 80);
+    assert.equal(list.scrollTop, list.scrollHeight - list.clientHeight);
     assert.equal(button.hidden, true);
-    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
-    assert.equal(unreadCount(document), 1, "jumping past the middle message must not mark it read");
+    await waitForCondition(() => unreadCount(document) === 1);
+    assert.equal(
+        moderatorRows(document)[1].dataset.unread,
+        "1",
+        "jumping past the middle message must not mark it read"
+    );
     list.scrollTop = 40;
     list.dispatchEvent(new dom.window.Event("scroll"));
     await waitForCondition(() => unreadCount(document) === 0);
@@ -402,6 +568,9 @@ test("capacity trimming removes expired authors and alerts, retaining selection 
     const document = dom.window.document;
     loadChatTools(dom);
     await waitForCondition(() => moderatorRows(document).length === 20);
+    openModeratorPanel(document);
+    const divider = document.querySelector('.bcct-moderator-box__list [role="separator"]');
+    assert.equal(divider.nextElementSibling, moderatorRows(document)[0]);
     const kept = moderatorRows(document)[10];
     const range = document.createRange();
     range.selectNodeContents(kept.querySelector(".bcct-moderator-row__text"));
@@ -411,6 +580,11 @@ test("capacity trimming removes expired authors and alerts, retaining selection 
     assert.equal(authorButton(document, "오래된 운영자"), undefined);
     assert.equal(unreadCount(document), 20);
     assert.equal(moderatorRows(document)[9], kept);
+    assert.equal(
+        divider.nextElementSibling,
+        moderatorRows(document)[0],
+        "the oldest surviving unread owns the divider"
+    );
     assert.equal(dom.window.getSelection().toString(), "kept-9");
     authorButton(document, "새 운영자").click();
     document
@@ -422,6 +596,7 @@ test("capacity trimming removes expired authors and alerts, retaining selection 
     await waitForCondition(() => !authorButton(document, "새 운영자"));
     assert.equal(authorButton(document, "전체").getAttribute("aria-pressed"), "true");
     assert.equal(moderatorRows(document).filter((row) => !row.hidden).length, 20);
+    assert.equal(divider.nextElementSibling, moderatorRows(document)[0]);
 });
 
 test("copy selection survives appearance updates and never navigates to a recycled original", async (t) => {
@@ -518,7 +693,7 @@ function managerChat(nickname, text, chatId = "") {
         chatId,
         nickname,
         text,
-        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
     });
 }
 
@@ -731,14 +906,14 @@ test("native moderator highlights follow nickname colors without changing text o
             chatId: "highlight-manager",
             nickname: "운영 담당",
             text: "일반 채팅에서도 읽을 수 있는 안내",
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nicknameColor: "rgb(30, 140, 95)",
         }) +
             realChzzkChatRow({
                 chatId: "highlight-streamer",
                 nickname: "방송하는 봄",
                 text: "방송자 메시지",
-                badgeImg: '<img src="https://example.test/streamer.png" alt="방송자">',
+                badgeImg: '<img src="https://nng-phinf.pstatic.net/streamer.png" alt="방송자">',
                 nicknameColor: "rgb(180, 120, 40)",
             }) +
             realChzzkChatRow({ chatId: "highlight-viewer", nickname: "시청하는 별", text: "일반 시청자 메시지" })
@@ -1188,7 +1363,7 @@ test("reusing a chat row for a new message id invalidates the previous original 
 
 test("id-less moderator rows with identical content keep distinct message identities", async (t) => {
     const repeated = realChzzkChatRow({
-        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         nickname: "같은 운영자",
         text: "반복 안내",
     });
@@ -1207,7 +1382,7 @@ test("id-less moderator rows with identical content keep distinct message identi
 test("reusing an id-less moderator row with a new virtual index collects the next message", async (t) => {
     const { dom } = createPageDom(
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nickname: "첫 운영자",
             text: "첫 안내",
         })
@@ -1235,7 +1410,7 @@ test("a long-lived mixed reuse state is retracted when the same generation becom
     const originalText = "이미 정상 수집된 운영자 안내";
     const { dom } = createPageDom(
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nickname: "기존 운영자",
             text: originalText,
         })
@@ -1521,7 +1696,8 @@ test("real chzzk pinned root dynamically collects a manager row without data-cha
     wrapper.insertAdjacentHTML(
         "beforeend",
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/chzzk-role-pinned.png" alt="채팅 운영자" width="18" height="18">',
+            badgeImg:
+                '<img src="https://nng-phinf.pstatic.net/chzzk-role-pinned.png" alt="채팅 운영자" width="18" height="18">',
             nickname: "고정 공지 매니저",
             text: "고정 공지 아래에서 추가된 안내",
         })
@@ -1545,13 +1721,14 @@ test("real chzzk markup: badge img alt collects broadcaster and manager, not vie
         [
             realChzzkChatRow({ nickname: "일반 시청자", text: "그냥 일반 채팅" }),
             realChzzkChatRow({
-                badgeImg: '<img src="https://example.test/chzzk-role-a.png" alt="스트리머" width="18" height="18">',
+                badgeImg:
+                    '<img src="https://nng-phinf.pstatic.net/chzzk-role-a.png" alt="스트리머" width="18" height="18">',
                 nickname: "부지런한 휴먼 989",
                 text: "asd",
             }),
             realChzzkChatRow({
                 badgeImg: [
-                    '<img src="https://example.test/chzzk-role-b.png" alt="방송 매니저" width="18" height="18">',
+                    '<img src="https://nng-phinf.pstatic.net/chzzk-role-b.png" alt="방송 매니저" width="18" height="18">',
                     '<img src="https://nng-phinf.pstatic.net/subscription/badge3.png" alt="3개월 구독" width="18" height="18">',
                 ].join(""),
                 nickname: "성실한 부계정",
@@ -1579,11 +1756,11 @@ test("real chzzk markup: badge img alt collects broadcaster and manager, not vie
     // 본 채팅창과 같은 실제 뱃지 아이콘이 순서대로 함께 표시된다.
     const broadcasterBadges = rows[0].querySelectorAll(".bcct-moderator-row__badge");
     assert.equal(broadcasterBadges.length, 1);
-    assert.equal(broadcasterBadges[0].getAttribute("src"), "https://example.test/chzzk-role-a.png");
+    assert.equal(broadcasterBadges[0].getAttribute("src"), "https://nng-phinf.pstatic.net/chzzk-role-a.png");
     assert.equal(broadcasterBadges[0].getAttribute("alt"), "스트리머");
     const managerBadges = rows[1].querySelectorAll(".bcct-moderator-row__badge");
     assert.equal(managerBadges.length, 2);
-    assert.equal(managerBadges[0].getAttribute("src"), "https://example.test/chzzk-role-b.png");
+    assert.equal(managerBadges[0].getAttribute("src"), "https://nng-phinf.pstatic.net/chzzk-role-b.png");
     assert.match(managerBadges[1].getAttribute("src"), /subscription\/badge3\.png$/);
     assert.equal(managerBadges[1].getAttribute("alt"), "3개월 구독");
     // 닉네임 색상도 본 채팅창과 동일하게 복원된다.
@@ -1599,7 +1776,8 @@ test("real chzzk markup: the renamed 채팅 운영자 badge is collected as mana
         [
             realChzzkChatRow({ nickname: "일반 시청자", text: "그냥 일반 채팅" }),
             realChzzkChatRow({
-                badgeImg: '<img src="https://example.test/chzzk-role-c.png" alt="채팅 운영자" width="18" height="18">',
+                badgeImg:
+                    '<img src="https://nng-phinf.pstatic.net/chzzk-role-c.png" alt="채팅 운영자" width="18" height="18">',
                 nickname: "부지런한 봇지기",
                 text: "운영자 공지입니다",
                 chatId: "chat-operator-rename-1",
@@ -1619,7 +1797,7 @@ test("real chzzk markup: the renamed 채팅 운영자 badge is collected as mana
     assert.equal(row.querySelector(".bcct-moderator-row__author").textContent, "부지런한 봇지기");
     const badge = row.querySelector(".bcct-moderator-row__badge");
     assert.equal(badge.getAttribute("alt"), "채팅 운영자");
-    assert.equal(badge.getAttribute("src"), "https://example.test/chzzk-role-c.png");
+    assert.equal(badge.getAttribute("src"), "https://nng-phinf.pstatic.net/chzzk-role-c.png");
 });
 
 test("sr-only badge descriptions are not mixed into the collected nickname or text", async (t) => {
@@ -1635,7 +1813,7 @@ test("sr-only badge descriptions are not mixed into the collected nickname or te
             '<button type="button" class="_nickname_1vemp_37" aria-haspopup="true" aria-expanded="false">',
             '<strong class="_name_1hyev_92">',
             '<span class="_truncate_dtc6c_2" style="overflow-wrap: break-word;">',
-            '<img src="https://example.test/chzzk-role-d.png" alt="스트리머" width="18" height="18">',
+            '<img src="https://nng-phinf.pstatic.net/chzzk-role-d.png" alt="스트리머" width="18" height="18">',
             '<i class="_icon_dtc6c_17" style="width: 16px; height: 16px; margin-top: 1px;">',
             '<span class="blind">명예훈장</span>',
             "</i>",
@@ -1888,7 +2066,7 @@ test("panel toggles do not create a mutation feedback loop on the broad chat roo
 test("a capped batch of moderator messages renders the final list once", async (t) => {
     const initialRows = Array.from({ length: 20 }, (_, index) =>
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nickname: `manager-${index}`,
             text: `기존 운영자 안내 ${index}`,
             chatId: `manager-existing-${index}`,
@@ -1913,7 +2091,7 @@ test("a capped batch of moderator messages renders the final list once", async (
 
     const addedRows = Array.from({ length: 10 }, (_, index) =>
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nickname: `new-manager-${index}`,
             text: `새 운영자 안내 ${index}`,
             chatId: `manager-added-batch-${index}`,
@@ -2108,7 +2286,7 @@ test("moderator collection reconnects after a pinned chat root is wholly replace
         "beforeend",
         realChzzkChatRow({
             badgeImg:
-                '<img src="https://example.test/chzzk-role-reconnect.png" alt="채팅 운영자" width="18" height="18">',
+                '<img src="https://nng-phinf.pstatic.net/chzzk-role-reconnect.png" alt="채팅 운영자" width="18" height="18">',
             nickname: "교체 후 매니저",
             text: "교체 후 실제 수집",
         })
@@ -2278,7 +2456,7 @@ test("a moderator emoticon whose src arrives late reaches the panel once with it
         realChzzkChatRow({
             nickname: "안내 담당",
             text: '<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24"></button>',
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nicknameColor: "",
         })
     );
@@ -2315,7 +2493,7 @@ test("a src-only body emoticon change is reparsed through the chat observer, unl
             nickname: "안내 담당",
             text: `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24" src="${icon}/icon/c_57.png"></button>`,
             badgeImg: [
-                '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+                '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
                 `<img src="${icon}/badge/cheatkey_24m.png" alt="">`,
             ].join(""),
             nicknameColor: "",
@@ -2353,13 +2531,13 @@ test("a redrawn id-less moderator row with a loading body image keeps its read r
         realChzzkChatRow({
             nickname: "안내 담당",
             text: '<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24"></button>',
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         });
     const { dom } = createPageDom(
         realChzzkChatRow({
             nickname: "안내 담당",
             text: `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24" src="${icon}/icon/c_57.png"></button>`,
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         })
     );
     t.after(() => closeChatToolsDom(dom));
@@ -2394,7 +2572,7 @@ test("redrawn identical id-less moderator rows keep their own originals when the
         realChzzkChatRow({
             nickname: "안내 담당",
             text: `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24"${src ? ` src="${src}"` : ""}></button>`,
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         });
     const { dom } = createPageDom(imageRow(`${icon}/icon/c_57.png`) + imageRow(`${icon}/icon/c_57.png`));
     t.after(() => closeChatToolsDom(dom));
@@ -2468,4 +2646,29 @@ test("an id-less list emptied row by row keeps one record per message when refil
     await new Promise((resolve) => setTimeout(resolve, 250));
     assert.deepEqual(collectedTexts(document), ["공지 가", "공지 나", "공지 가"]);
     assert.equal(unreadCount(document), 3);
+});
+
+test("same-broadcast fragment navigation keeps a detached notice and does not mark read messages unread", async (t) => {
+    const { dom } = createPageDom(activityChat("detached") + activityChat("visible"));
+    t.after(() => closeChatToolsDom(dom));
+    const { document } = dom.window;
+    loadChatTools(dom);
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    await waitForCondition(() => collectedTexts(document).length === 2);
+    const viewport = installModeratorViewport(dom);
+    openModeratorPanel(document);
+    await waitForCondition(() => unreadCount(document) === 1);
+    viewport.scrollTop = viewport.scrollTop ? 0 : 40;
+    viewport.dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => unreadCount(document) === 0);
+    openModeratorPanel(document);
+    document.querySelector('.chat-list [data-chat-id="detached"]').remove();
+    const detected = new Promise((resolve) =>
+        dom.window.addEventListener("cheese-spanner:routechange:detected", resolve, { once: true })
+    );
+    dom.window.location.hash = "#same-live";
+    await detected;
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    assert.deepEqual(collectedTexts(document).sort(), ["detached", "visible"]);
+    assert.equal(unreadCount(document), 0);
 });

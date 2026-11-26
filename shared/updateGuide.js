@@ -87,6 +87,13 @@
                 "다시보기 멀티뷰 추가(기본 꺼짐 · 설정 → 플레이어), 채팅·댓글 분할 보기(설정 → 다시보기), 채팅 닉네임 숨기기(기본 꺼짐 · 설정 → 채팅), 방송 목록 등급 필터 추가, 라이브 자동 배속 방지(기본 켜짐)",
             cards: Object.freeze([]),
         }),
+        "1.4.9": Object.freeze({
+            version: "1.4.9",
+            title: "새 기능",
+            summary:
+                "다시보기 댓글 챕터(영상 아래 댓글 ⋯ → 챕터 추가), 채팅 모아보기 새 메시지 선, 멀티뷰 빈 하단 접기, 방송 태그 제외, 스트림 진단 복사",
+            cards: Object.freeze([]),
+        }),
     });
     globalThis.CheeseSpannerUpdateGuide = Object.freeze({
         MESSAGE_TYPE: "cheese-spanner:update-guide",

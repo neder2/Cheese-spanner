@@ -51,7 +51,7 @@
 [data-bctt-active="1"]{
   background:var(--bct-brand-weak) !important;
   border-radius:var(--bct-radius-sm);
-  box-shadow:0 0 0 1px color-mix(in srgb,var(--bct-brand-text) 40%,transparent);
+  box-shadow:0 0 0 1px var(--bct-brand-border);
 }
 @media (max-width: 520px){
   .bctt-tooltip{ max-width:calc(100vw - 16px); }
@@ -64,6 +64,8 @@
     let pendingTitleEl = null;
     let openTimer = 0;
     let positionRaf = 0;
+    let titleObserver = null;
+    let refreshTitle = false;
     let listenersInstalled = false;
     let removePageChangeDetection = null;
 
@@ -185,12 +187,28 @@
         tip.textContent = text;
         activeTitleEl = titleEl;
         titleEl.setAttribute(ACTIVE_ATTR, "1");
+        titleObserver?.disconnect();
+        titleObserver = new MutationObserver(handleTitleChange);
+        titleObserver.observe(titleEl, {
+            childList: true,
+            characterData: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ["aria-label", "aria-hidden", "class", "hidden", "href", "style", "title"],
+        });
+        const parentLink = titleEl.parentElement?.closest("a");
+        if (parentLink) {
+            titleObserver.observe(parentLink, { attributes: true, attributeFilter: ["aria-label", "href", "title"] });
+        }
         positionTooltip(titleEl);
         tip.setAttribute("data-show", "1");
     }
 
     function hideTooltip() {
         clearOpenTimer();
+        titleObserver?.disconnect();
+        titleObserver = null;
+        refreshTitle = false;
         if (activeTitleEl) activeTitleEl.removeAttribute(ACTIVE_ATTR);
         activeTitleEl = null;
         if (tooltip) tooltip.removeAttribute("data-show");
@@ -287,17 +305,39 @@
 
     function handleResize() {
         clearOpenTimer();
+        handleTitleChange();
+    }
+
+    function handleTitleChange() {
+        if (!activeTitleEl) return;
+        refreshTitle = true;
         scheduleTooltipPosition();
     }
 
     function scheduleTooltipPosition() {
-        if (positionRaf) return;
+        if (positionRaf || !activeTitleEl) return;
 
         positionRaf = requestFrame(() => {
             positionRaf = 0;
 
-            if (activeTitleEl?.isConnected) positionTooltip(activeTitleEl);
-            else if (activeTitleEl) hideTooltip();
+            if (!activeTitleEl) return;
+            if (!activeTitleEl.isConnected) {
+                hideTooltip();
+                return;
+            }
+            if (refreshTitle) {
+                refreshTitle = false;
+                const text =
+                    resolveTitleElement(activeTitleEl) === activeTitleEl && isTruncated(activeTitleEl)
+                        ? getFullTitle(activeTitleEl)
+                        : "";
+                if (!text) {
+                    hideTooltip();
+                    return;
+                }
+                if (tooltip.textContent !== text) tooltip.textContent = text;
+            }
+            positionTooltip(activeTitleEl);
         });
     }
 

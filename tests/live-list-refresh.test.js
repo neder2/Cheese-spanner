@@ -32,11 +32,22 @@ async function fixture(t, refetch = async () => {}) {
     window.clearTimeout = (key) => timers.delete(key);
     const calls = [];
     const queryKey = ["all-lives", "/lives", { sortType: "RECOMMEND" }];
+    let activeKey = queryKey;
+    let onQueryChange;
+    const cache = {
+        findAll: () => [{ queryKey: activeKey }, { queryKey: ["following-live"] }],
+        subscribe(handler) {
+            onQueryChange = handler;
+            return () => {
+                onQueryChange = null;
+            };
+        },
+    };
     window.document.getElementById("RECOMMEND").__reactFiber$test = {
         return: {
             memoizedProps: {
                 client: {
-                    getQueryCache: () => ({ findAll: () => [{ queryKey }, { queryKey: ["following-live"] }] }),
+                    getQueryCache: () => cache,
                     refetchQueries: (...args) => {
                         calls.push(args);
                         return refetch();
@@ -53,6 +64,10 @@ async function fixture(t, refetch = async () => {}) {
         calls,
         timers,
         queryKey,
+        changeQuery(next) {
+            activeKey = next;
+            onQueryChange?.({ type: "observerOptionsUpdated" });
+        },
         button: window.document.getElementById("cheese-spanner-live-list-refresh"),
     };
 }
@@ -132,4 +147,68 @@ test("leaving the list removes the button and ignores a late response", async (t
     assert.equal(button.isConnected, false);
     assert.equal(timers.size, 0);
     assert.equal(refreshed, 0);
+});
+
+test("sort and filter changes suppress completion, including returning to the starting query", async (t) => {
+    for (const returnToStart of [false, true]) {
+        await t.test(`return ${returnToStart}`, async (t) => {
+            let resolve;
+            const { window, button, timers, queryKey, changeQuery } = await fixture(
+                t,
+                () =>
+                    new Promise((done) => {
+                        resolve = done;
+                    })
+            );
+            let refreshed = 0;
+            window.addEventListener("cheese-spanner:live-list-refreshed", () => refreshed++);
+            button.click();
+            changeQuery(["all-lives", "/lives", { sortType: "LATEST", tags: ["tag"] }]);
+            if (returnToStart) changeQuery(queryKey);
+            resolve();
+            await new Promise((done) => setImmediate(done));
+            [...timers.values()][0].fn();
+            assert.equal(refreshed, 0);
+            assert.doesNotMatch(button.title, /완료/);
+            assert.equal(button.disabled, false);
+        });
+    }
+});
+
+test("a new refresh or a filter change clears the previous result for the same sort", async (t) => {
+    let finish;
+    let requests = 0;
+    const f = await fixture(t, () =>
+        ++requests === 3
+            ? new Promise((resolve) => {
+                  finish = resolve;
+              })
+            : Promise.resolve()
+    );
+    const { window, button, timers, queryKey, changeQuery } = f;
+    const label = button.title;
+    let completed = 0;
+    window.addEventListener("cheese-spanner:live-list-refreshed", () => completed++);
+    const settle = async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+        [...timers.values()].at(-1).fn();
+    };
+    const filtered = ["all-lives", "/lives", { sortType: "RECOMMEND", tags: ["tag"] }];
+    button.click();
+    await settle();
+    assert.match(button.title, /완료/);
+    changeQuery(filtered);
+    assert.equal(button.title, label, "a settled result belongs only to its filter");
+    button.click();
+    await settle();
+    assert.match(button.title, /완료/);
+    button.click();
+    assert.equal(button.title, label, "the next request clears the old result immediately");
+    changeQuery(queryKey);
+    changeQuery(filtered);
+    finish();
+    await settle();
+    assert.equal(button.title, label);
+    assert.equal(completed, 2);
+    assert.equal(button.disabled, false);
 });

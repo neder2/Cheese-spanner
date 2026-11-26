@@ -29,9 +29,12 @@
     const PANEL = "data-bcct-keyword-settings-panel";
     const STYLE_ID = "cheese-spanner-chat-keyword-settings-style";
     const STYLE = `
-[${PANEL}]{position:fixed;z-index:10020;box-sizing:border-box;width:340px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:16px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-lg);background:var(--bct-surface);color:var(--bct-text);box-shadow:var(--bct-shadow);font:13px/1.5 var(--bct-font);text-align:left;overflow-wrap:anywhere;overscroll-behavior:contain}
+[${PANEL}]{position:fixed;z-index:var(--bct-z-dialog);box-sizing:border-box;width:340px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:16px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-lg);background:var(--bct-surface);color:var(--bct-text);box-shadow:var(--bct-shadow);font:13px/1.5 var(--bct-font);text-align:left;overflow-wrap:anywhere;overscroll-behavior:contain}
+/* The entry and editor share the native menu's 1001 stacking context. Keep the collection open beneath them. */
+#aside-chatting:has([${ENTRY}]) [data-bcct-moderator-box]{z-index:1000}
 [${PANEL}] *{box-sizing:border-box}
-[${PANEL}] h2{margin:0 0 12px;font:700 15px/1.4 var(--bct-font);color:var(--bct-text)}
+[${PANEL}] header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+[${PANEL}] h2{margin:0;font:700 15px/1.4 var(--bct-font);color:var(--bct-text)}
 [${PANEL}] label{display:block;margin:10px 0 6px;color:var(--bct-text)}
 [${PANEL}] .bcct-keyword-toggle{display:flex;gap:8px;align-items:center}
 [${PANEL}] input[type=checkbox]{width:16px;height:16px;flex:none;accent-color:var(--bct-brand-text)}
@@ -45,9 +48,11 @@
 [${PANEL}][data-error=true] [role=status]{color:var(--bct-danger)}
 [${PANEL}] .bcct-keyword-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:12px}
 [${PANEL}] button{padding:7px 12px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-sm);background:var(--bct-surface-weak);color:var(--bct-text);font:inherit;cursor:pointer}
+[${PANEL}] button[data-action=close]{display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border:0;background:transparent}
+[${PANEL}] button[data-action=close]:hover{background:var(--bct-hover)}
 [${PANEL}] button[data-action=save]{background:var(--bct-brand);color:var(--bct-on-brand);border-color:transparent;font-weight:700}
 [${PANEL}] button:disabled{opacity:.5;cursor:default}
-[${PANEL}] :is(button,input,textarea,select):focus-visible{outline:2px solid var(--bct-brand-text);outline-offset:2px}
+[${PANEL}] :is(button,input,textarea,select):focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:2px}
 [${PANEL}] [hidden]{display:none!important}
 `;
     let observer = null;
@@ -137,13 +142,7 @@
         return Object.fromEntries(KEYS.map((key) => [key, value[key]]));
     }
     function form(s) {
-        return {
-            chatKeywordFilterEnabled: s.toggle.checked,
-            chatKeywordFilterWords: s.words.value,
-            chatKeywordFilterApplyMode: s.applyMode.value,
-            chatKeywordFilterMatchMode: s.matchMode.value,
-            chatKeywordFilterExactWords: s.exactWords,
-        };
+        return { ...s.draft, chatKeywordFilterExactWords: s.exactWords };
     }
     function isDirty(s) {
         const values = form(s);
@@ -154,7 +153,7 @@
         s.toggle.disabled = busy;
         s.words.disabled = busy;
         s.applyMode.disabled = busy;
-        const individual = s.applyMode.value === "individual";
+        const individual = s.draft.chatKeywordFilterApplyMode === "individual";
         s.matchMode.disabled = busy || individual;
         s.matchMode.parentElement.hidden = individual;
         s.individual.hidden = !individual;
@@ -167,6 +166,7 @@
         s.raw = { ...raw };
         s.baseRaw = { ...raw };
         s.baseForm = normalized(raw);
+        s.draft = { ...s.baseForm };
         s.toggle.checked = s.baseForm.chatKeywordFilterEnabled;
         s.words.value = s.baseForm.chatKeywordFilterWords;
         s.applyMode.value = s.baseForm.chatKeywordFilterApplyMode;
@@ -178,11 +178,11 @@
     }
 
     function renderRules(s, disabled) {
-        const invalid = settings.normalizeChatKeywordFilterWords(s.words.value) === null;
+        const invalid = settings.normalizeChatKeywordFilterWords(s.draft.chatKeywordFilterWords) === null;
         const rules = settings.getChatKeywordFilterRules({ ...form(s), chatKeywordFilterApplyMode: "individual" });
         const signature = JSON.stringify(rules.map((rule) => rule.phrase));
-        if (!invalid && s.rules.dataset.words !== signature) {
-            s.rules.dataset.words = signature;
+        if (!invalid && s.ruleSignature !== signature) {
+            s.ruleSignature = signature;
             s.rules.replaceChildren();
             for (const { phrase } of rules) {
                 const label = document.createElement("label");
@@ -190,6 +190,7 @@
                 text.textContent = phrase;
                 const select = document.createElement("select");
                 select.dataset.keywordPhrase = phrase;
+                s.phrases.set(select, phrase);
                 select.setAttribute("aria-label", `${phrase} 일치 조건`);
                 select.setAttribute("aria-describedby", "cheese-spanner-chat-keywords-match-help");
                 select.innerHTML = '<option value="contains">포함</option><option value="exact">완전 일치</option>';
@@ -199,7 +200,7 @@
             if (!rules.length) s.rules.textContent = "숨길 문구 입력 후 문구별 조건 표시";
         }
         for (const select of s.rules.querySelectorAll("select")) {
-            const rule = rules.find((item) => item.phrase === select.dataset.keywordPhrase);
+            const rule = rules.find((item) => item.phrase === s.phrases.get(select));
             if (rule) select.value = rule.matchMode;
             select.disabled = disabled || invalid;
         }
@@ -254,7 +255,7 @@
         event.preventDefault();
         event.stopPropagation();
         if (!event.isTrusted || !valid(s) || s.loading || s.pending || s.conflict) return;
-        const words = settings.normalizeChatKeywordFilterWords(s.words.value);
+        const words = settings.normalizeChatKeywordFilterWords(s.draft.chatKeywordFilterWords);
         if (words === null) {
             status(s, "한 줄 100자, 최대 50개, 전체 2,000자까지 입력 가능", true);
             s.words.focus({ preventScroll: true });
@@ -310,13 +311,11 @@
         if (!event.isTrusted || suspended || !e.menu.isConnected || e.trigger.getAttribute("aria-expanded") !== "true")
             return;
         close(false);
-        ensureUiTheme?.();
-        injectStyleOnce(STYLE_ID, STYLE);
         const panel = document.createElement("section");
         panel.setAttribute(PANEL, "1");
         panel.setAttribute("role", "dialog");
         panel.setAttribute("aria-label", "문구 숨김");
-        panel.innerHTML = `<h2>문구 숨김</h2>
+        panel.innerHTML = `<header><h2>문구 숨김</h2><button type="button" data-action="close" aria-label="문구 숨김 닫기">${CheeseSpanner.utils.panelCloseIcon}</button></header>
 <label class="bcct-keyword-toggle"><input type="checkbox" data-field="enabled">지정한 문구와 일치하는 채팅 숨기기</label>
 <label class="bcct-keyword-choice">조건 적용 방식<select data-field="applyMode" aria-describedby="cheese-spanner-chat-keywords-mode-help"><option value="all">전체 적용</option><option value="individual">부분 적용</option></select></label>
 <p id="cheese-spanner-chat-keywords-mode-help">전체 적용은 모든 문구에 같은 조건, 부분 적용은 문구마다 다른 조건</p>
@@ -325,7 +324,7 @@
 <label for="cheese-spanner-chat-keywords">숨길 문구</label><textarea id="cheese-spanner-chat-keywords" data-field="words" rows="5" maxlength="2000" aria-describedby="cheese-spanner-chat-keywords-help" placeholder="한 줄에 문구 하나씩 입력" spellcheck="false"></textarea>
 <p id="cheese-spanner-chat-keywords-help">영문 대소문자 구분 없음. 최대 50개, 한 문구 100자, 전체 2,000자</p>
 <div data-field="individual" hidden><p>문구마다 일치 조건 선택. 새 문구는 기본 ‘포함’</p><div data-field="rules" role="group" aria-label="문구별 일치 조건"></div></div>
-<p role="status" aria-live="polite"></p><div class="bcct-keyword-actions"><button type="button" data-action="reload" hidden>최신 설정 불러오기</button><button type="button" data-action="close">닫기</button><button type="button" data-action="save">저장</button></div>`;
+<p role="status" aria-live="polite"></p><div class="bcct-keyword-actions"><button type="button" data-action="reload" hidden>최신 설정 불러오기</button><button type="button" data-action="save">저장</button></div>`;
         const s = {
             ...e,
             entryButton: e.button,
@@ -333,6 +332,8 @@
             raw: {},
             baseRaw: {},
             baseForm: normalized({}),
+            draft: normalized({}),
+            phrases: new WeakMap(),
             loading: true,
             pending: false,
             conflict: false,
@@ -356,11 +357,13 @@
         });
         panel.querySelector('[data-action="close"]').addEventListener("click", () => close(true));
         panel.addEventListener("input", (input) => {
+            if (!input.isTrusted || s.loading || s.pending) return;
+            if (input.target === s.words) s.draft.chatKeywordFilterWords = s.words.value;
             if (
                 input.target === s.words &&
                 !s.pending &&
                 !s.loading &&
-                settings.normalizeChatKeywordFilterWords(s.words.value) !== null
+                settings.normalizeChatKeywordFilterWords(s.draft.chatKeywordFilterWords) !== null
             ) {
                 s.exactWords = settings
                     .getChatKeywordFilterRules({ ...form(s), chatKeywordFilterApplyMode: "individual" })
@@ -372,12 +375,16 @@
             if (!s.conflict && !s.pending && !s.loading) status(s, "저장하지 않은 변경 사항");
         });
         panel.addEventListener("change", (change) => {
-            if (s.pending || s.loading) return;
-            if (change.target.closest?.('[data-field="rules"]')) {
-                s.exactWords = [...s.rules.querySelectorAll("select")]
-                    .filter((select) => select.value === "exact")
-                    .map((select) => select.dataset.keywordPhrase)
-                    .join("\n");
+            if (!change.isTrusted || s.pending || s.loading) return;
+            if (change.target === s.toggle) s.draft.chatKeywordFilterEnabled = s.toggle.checked;
+            else if (change.target === s.applyMode) s.draft.chatKeywordFilterApplyMode = s.applyMode.value;
+            else if (change.target === s.matchMode) s.draft.chatKeywordFilterMatchMode = s.matchMode.value;
+            else if (s.phrases.has(change.target)) {
+                const phrase = s.phrases.get(change.target);
+                const exact = new Set(s.exactWords.split("\n").filter(Boolean));
+                if (change.target.value === "exact") exact.add(phrase);
+                else exact.delete(phrase);
+                s.exactWords = [...exact].join("\n");
             }
             controls(s);
             if (!s.conflict) status(s, "저장하지 않은 변경 사항");
@@ -400,6 +407,8 @@
         if (!next) return;
         if (session && !valid(session)) close(false);
         if (entry?.wrapper.isConnected) return;
+        ensureUiTheme?.();
+        injectStyleOnce(STYLE_ID, STYLE);
         const wrapper = document.createElement("div");
         wrapper.setAttribute(ENTRY, "1");
         wrapper.className = next.sample.parentElement.className;

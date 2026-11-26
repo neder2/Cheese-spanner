@@ -140,7 +140,7 @@ test("R2-121: a query spanning the end of one comment and the start of another i
         ["방송도기대", 1],
     ]) {
         assert.equal(model.filterVideosByNormalizedQuery([video], query).length, expected, query);
-        assert.equal(Boolean(model.getCommentMatchText(video, query)), Boolean(expected), query);
+        assert.equal(Boolean(model.getCommentMatchTexts(video, query).length), Boolean(expected), query);
     }
     assert.equal(model.buildCommentNorm(["감사합니다", "음악 좋네요"]).includes("다음"), false);
 });
@@ -636,7 +636,7 @@ test("R2-123: a result card without its own thumbnail, duration or date keeps no
                         videoTitle: "needle known",
                         duration: 65,
                         publishDate: "2025-01-02 10:00:00",
-                        thumbnailImageUrl: "https://example.com/300.jpg",
+                        thumbnailImageUrl: "https://nng-phinf.pstatic.net/300.jpg",
                     },
                 ],
                 last: true,
@@ -658,7 +658,7 @@ test("R2-123: a result card without its own thumbnail, duration or date keeps no
 
     // Contrast: observed values still replace the template's.
     const known = document.querySelector('[data-bcvs-injected="1"] a[href="/video/300"]').closest("article");
-    assert.equal(known.querySelector("img").getAttribute("src"), "https://example.com/300.jpg");
+    assert.equal(known.querySelector("img").getAttribute("src"), "https://nng-phinf.pstatic.net/300.jpg");
     assert.equal(known.querySelector(".dur").textContent, "1:05");
     assert.equal(known.querySelector(".dur").style.visibility, "");
     assert.equal(known.querySelector(".date").textContent, "25.01.02");
@@ -712,4 +712,147 @@ test("R2-124: a page limit changed on another channel tab still invalidates the 
     typeQuery(dom, "needle");
     await waitForCondition(() => getStatus(dom).textContent.startsWith("60 / 60"));
     assert.deepEqual(pages, ["0", "0", "1"]);
+});
+
+test("rebuilding a partial channel index replaces changed titles and removes unavailable videos", async () => {
+    const root = loadModules();
+    let retry = false;
+    const repository = createRepo(root, {
+        fetchJson: async (url) => {
+            if (retry) return { content: { data: makeVideos(1, 0, "갱신"), last: true } };
+            if (pageOf(url) === "1") throw new Error("page two failed");
+            return { content: { data: makeVideos(30, 0, "이전"), last: false } };
+        },
+    });
+    repository.setContext(CHANNEL, "검색", repoOptions);
+    const partial = await repository.buildIndex(CHANNEL);
+    assert.equal(partial.videos.length, 30);
+    assert.equal(partial.complete, false);
+    retry = true;
+    const recovered = await repository.buildIndex(CHANNEL);
+    assert.equal(recovered.complete, true);
+    assert.deepEqual(
+        Array.from(recovered.videos, (video) => [video.videoNo, video.title]),
+        [["1000", "갱신 0"]]
+    );
+});
+
+test("video comment search retries malformed pages and follows a short page's explicit next offset", async () => {
+    const fake = createFakeTimers();
+    const root = loadModules(fake.globals);
+    let malformed = true;
+    let settle;
+    const offsets = [];
+    const repository = createRepo(root, {
+        fetchJson: async () => ({ content: { data: makeVideos(1), last: true } }),
+        fetchChzzkCommentPage: async ({ offset }) => {
+            offsets.push(offset);
+            if (malformed) return { comments: { data: "invalid" } };
+            const content = offset === 0 ? "처음" : "바늘";
+            return { comments: { data: [{ comment: { content } }], page: { next: offset === 0 ? 17 : null } } };
+        },
+        onCommentProgress: (progress) => progress?.force && settle(),
+    });
+    repository.setContext(CHANNEL, "바늘", { ...repoOptions, videoSearchCommentMaxPagesPerVideo: 3 });
+    await repository.buildIndex(CHANNEL);
+    const video = repository.getIndex(CHANNEL).videos[0];
+    async function search() {
+        const finished = new Promise((resolve) => {
+            settle = resolve;
+        });
+        repository.scheduleCommentSearch();
+        fake.fireLatest();
+        await finished;
+    }
+    await search();
+    assert.match(video.commentError, /목록 응답/);
+    malformed = false;
+    await search();
+    assert.deepEqual(offsets, [0, 0, 17]);
+    assert.equal(video.commentError, null);
+    assert.deepEqual(Array.from(root.videoSearchModel.getCommentMatchTexts(video, "바늘")), ["바늘"]);
+});
+
+test("comment matches open all cached bodies with ordinary links to in-range timestamps", async () => {
+    const chrome = createFakeChrome({ sync: { videoSearchCommentDelayMs: 0, videoSearchMaxPages: 1 } });
+    const dom = createVideoSearchPage(chrome);
+    const { document, KeyboardEvent } = dom.window;
+    let requests = 0;
+    dom.window.fetch = async (url) => {
+        requests++;
+        if (String(url).includes("/videos?"))
+            return jsonResponse({
+                content: { data: [{ videoNo: 100, videoTitle: "Existing 100", duration: 600 }], last: true },
+            });
+        const bodies = [
+            "01:24 보스전 시작",
+            "08:32 보스전 재도전",
+            "다음 보스전 13:00 01:99",
+            "검색 제외",
+            "01:24 보스전 시작",
+        ];
+        return jsonResponse({ content: { comments: { data: bodies.map((content) => ({ comment: { content } })) } } });
+    };
+    await loadPage(dom);
+    typeQuery(dom, "보스전");
+    await waitForCondition(() => document.querySelector("[data-bcvs-comment-icon]"));
+    const icon = document.querySelector("[data-bcvs-comment-icon]");
+    const before = requests;
+    icon.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const tip = document.querySelector("[data-bcvs-comment-tooltip]");
+    assert.equal(tip.querySelectorAll("li").length, 3);
+    assert.deepEqual(
+        Array.from(tip.querySelectorAll("a"), (a) => a.getAttribute("href")),
+        ["/video/100?currentTime=84", "/video/100?currentTime=512"]
+    );
+    assert.match(tip.textContent, /13:00 01:99/);
+    assert.equal(requests, before);
+    assert.equal(document.activeElement, tip.querySelector("a"));
+    document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(document.activeElement, icon);
+    assert.equal(tip.hasAttribute("data-show"), false);
+    icon.click();
+    typeQuery(dom, "없음");
+    assert.equal(tip.hasAttribute("data-show"), false);
+});
+
+test("late comment results preserve keyboard focus on the same timestamp occurrence", async () => {
+    const chrome = createFakeChrome({ sync: { videoSearchCommentDelayMs: 0, videoSearchMaxPages: 1 } });
+    const dom = createVideoSearchPage(chrome);
+    const { document, KeyboardEvent } = dom.window;
+    let release;
+    const lastResponse = new Promise((resolve) => {
+        release = resolve;
+    });
+    dom.window.fetch = async (url) => {
+        if (String(url).includes("/videos?")) {
+            const data = [100, 101, 102, 103].map((videoNo) => ({
+                videoNo,
+                videoTitle: `Existing ${videoNo}`,
+                duration: 600,
+            }));
+            return jsonResponse({ content: { data, last: true } });
+        }
+        if (String(url).includes("/id/103/")) await lastResponse;
+        const data = ["01:24 첫 장면", "01:24 다시 볼 장면"].map((content) => ({ comment: { content } }));
+        return jsonResponse({ content: { comments: { data } } });
+    };
+    await loadPage(dom);
+    typeQuery(dom, "장면");
+    const icons = () => document.querySelectorAll("[data-bcvs-comment-icon]");
+    await waitForCondition(() => icons().length === 3);
+    icons()[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const tip = document.querySelector("[data-bcvs-comment-tooltip]");
+    const secondLink = () => tip.querySelectorAll("a")[1];
+    secondLink().focus();
+    tip.scrollTop = 17;
+
+    release();
+    await waitForCondition(() => icons().length === 4);
+    assert.equal(document.activeElement, secondLink());
+    assert.equal(document.activeElement.getAttribute("href"), "/video/100?currentTime=84");
+    assert.equal(tip.scrollTop, 17);
+    document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(document.activeElement, icons()[0]);
+    assert.equal(tip.hasAttribute("data-show"), false);
 });

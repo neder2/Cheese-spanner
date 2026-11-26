@@ -50,13 +50,17 @@
 
 HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 오류예요. 비어 있는 results는 정상 빈 결과이고, 비어 있지 않은 results에 유효한 항목이 하나도 없으면 오류로 처리해요. 입력 변경·추가 패널 닫기·페이지 이동·OFF 뒤 응답은 현재 검색에 반영하지 않아요. 내부 타임아웃은 검색 실패로 표시하고 결과 없음으로 바꾸지 않아요. 요청에는 검색어·size만 넣고 선택한 제외 목록 전체는 보내지 않아요.
 
+카테고리 클립은 현재 선택된 기간과 정렬을 `filterType`·`orderType`으로 조회해요. 드롭스 목록은 `drops-lives`에서 같은 정렬과 선택된 캠페인을 조회해요. 화면에서 선택을 확인할 수 없는 클립·드롭스 목록은 현재 표시된 카드에서만 검색해요.
+
+제외 패널의 태그 검색은 현재 원본 카드와 `/service/v1/lives`의 모든 시청자 구간을 사용해요. 일반 태그는 `tags`, 같이보기 종류·대회명은 `watchPartyNo`·`watchPartyType`·`watchPartyTag`, 드롭스와 프라임은 `dropsCampaignNo`·유료 상품 ID로 판정해요. 기존 목록 조회와 페이지를 공유하고 가장 오래된 페이지의 수신 시각부터 5분간 태그 이름과 커서를 재사용해요. 한 번에 최대 200페이지를 읽고 남은 페이지는 ‘태그 계속 찾기’로 이어가요. 입력 변경·패널 닫기는 태그 검색의 요청 참여만 취소해요. 이름 일부가 일치하는 태그는 ‘태그 더 보기’로 50개씩 끝까지 볼 수 있어요. 카테고리는 최대 50개까지 표시하고, 한쪽 조회가 실패해도 확보한 후보는 선택할 수 있어요.
+
 전체 라이브 목록의 카테고리 정체성은 `/service/v1/lives` 항목의 `categoryType`·`liveCategory`이며 표시 이름은 `liveCategoryValue`예요. 원본 카드의 카테고리 링크는 같은 출처의 `/category/{type}/{id}/lives` 또는 끝 슬래시가 있는 형태를 해석하고 경로 조각을 디코딩해요. 현재 원본 링크가 없거나 여러 링크의 정체성이 충돌하면 이름·태그·제목이나 오래된 API 값으로 대신 판정하지 않아요. 메타데이터 후보와 확장이 추가한 카드는 비어 있지 않은 id·channelId 일치와 양의 안전 정수 liveId를 요구하고 현재 결합을 다시 확인해요. liveId 결측·0·음수·소수·안전 범위 초과는 카테고리 제외에서 통과시키며 원본의 현재 링크 판정과 독립이에요. 추가 카드 템플릿의 옛 카테고리 링크는 현재 유형·ID로 바꿔요.
 
 2026-09-30 인증정보 없는 HTTP 요청에서 검색어 `마리모`는 `GAME`·`Marimo_League`·`마리모 리그`를 반환했고, GET `/service/v1/categories/GAME/Marimo_League/info`의 `openLiveCount`는 0이었어요. 공식 공개 코드도 링크에 categoryType·liveCategory를 그대로 사용했어요. 이 근거는 방송이 없는 검색 결과와 대문자 유형의 입력 계약을 뒷받침하며 실제 Chrome의 요청·원본 카드 DOM 성공을 증명하지 않아요.
 
 이미지·미디어의 URL은 HTTPS와 용도별 허용 호스트로 검증해요. 현재 공용 허용 목록에는 pstatic 하위 호스트, 이미지용 `livecloud-thumb.akamaized.net`, 미디어용 `ex-nlive-streaming.navercdn.com`이 있어요. URL 검증 통과가 선택 권한·CORS·브라우저 재생 성공까지 보장하지는 않아요.
 
-멀티뷰는 OPEN 상세의 `livePlaybackJson.media`에서 확인된 LLHLS, 다음으로 HLS 소스를 선택해요. 재생 JSON 오류·지원 소스 없음·종료 방송은 실패 상태예요. 미리보기는 live-detail·auto-play-info의 실제 소스를 검증하며 네이티브 목록 미리보기와 확장 소유 미리보기의 제어 경로를 구분해요. 원격 JS·WASM을 재생 응답으로 받아 실행하지 않아요.
+멀티뷰는 OPEN 상세의 `livePlaybackJson.media`에서 확인된 LLHLS, 다음으로 HLS 소스를 선택해요. 재생 JSON 오류·지원 소스 없음·종료 방송은 실패 상태예요. 미리보기는 live-detail·auto-play-info의 실제 소스를 검증하며 네이티브 목록 미리보기와 확장 소유 미리보기의 제어 경로를 구분해요. 확장 미리보기는 hls.js와 브라우저 기본 HLS 양쪽에서 LLHLS 재생이 실패하면 같은 응답의 일반 HLS URL을 한 번 시도해요. 재시도는 음량·음소거와 hls.js의 화질 상한을 유지해요. 미리보기를 닫거나 소스를 교체하면 이전 소스의 이벤트 처리를 끝내요. 원격 JS·WASM을 재생 응답으로 받아 실행하지 않아요.
 
 ## DOM·페이지 객체 입력
 
@@ -95,15 +99,35 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 파트너·챌린저는 확인된 인증 종류로 판정해요. 프로·일반은 실제 등급의 확정값이 아니라 비공식 채널이며 인증 종류가 명시적으로 null인 채널의 공개 구독 지원 여부(true/false)로 구분하고 UI에 기준을 밝혀요. 공식 채널·미지원 종류·필드 누락·실패·채널 ID 불일치는 일반으로 대체하지 않아요. 등급 필터가 켜진 경우에만 필요한 채널 상세를 회차당 최대 20개·동시 4개·요청당 3초로 조회해요. 캐시·한 탐색의 채널 수는 각각 최대 3,000개이고 실패도 캐시해요. 같은 탐색에서 재시도하지 않으며 조건·정렬·경로 변경과 OFF에서 진행 요청을 취소해요. 다음 탐색에서 5분 만료를 확인하고, 현재 탐색의 확인값은 그 탐색 동안 보존해요. 선택은 기존 sessionStorage version 1의 주소별 레코드에 선택적인 `streamerGrades` 배열로 보관하고 허용된 네 값만 복원해요.
 
+등급 상세를 조회하기 전에 확실히 제외되는 검색어·카테고리 후보를 걸러요. 겹친 원본 카드 중 하나라도 조건에 맞으면 해당 채널을 조회 대상으로 두고, 검색 조건을 통과한 미확인 등급도 요청 후보로 남겨요. 전체 방송의 새로고침은 현재 검색·필터를 유지한 채 새 탐색을 시작하므로 만료된 실패를 다시 조회할 수 있어요.
+
 현재 닉네임 렌더러의 인증 마크는 `i._mark_8bw0p_*`에 `_is_partner_8bw0p_*` 또는 `_is_challenger_8bw0p_*`가 붙고 숨은 설명은 공통 `인증 마크`예요. 실제 목록 DOM과 페이지가 로드한 `index-BcgE118t.js`와 같은 이름의 보관 소스에서 공통 렌더러·채팅 닉네임 연결을 대조했어요. 채팅 파서는 현재 작성자 요소 안의 보이는 마크만 사용하고 본문·팝업·공식 마크는 제외해요. 방송자·운영자 역할을 우선하며 파트너·챌린저도 기존 store의 정체성·재사용·중복 방지·읽음 수명을 따라요. 추가 목록 카드는 템플릿의 인증 종류를 그대로 복사하지 않아요. 수정본 확장을 재로드한 실화면 검증과 공개 데이터·기존 화면 관측은 구분해요.
 
 2026-11-14 Chrome의 라이브 채팅 팝업과 [공개 번들](https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/index-cg6y1ITV.js)에서는 같은 렌더러가 `1pcsq` 계열로 바뀌었어요. 인증 마크는 `_mark_1pcsq_81`, 등급은 `_is_partner_1pcsq_81`·`_is_challenger_1pcsq_84`·`_is_official_1pcsq_87`이에요. `shared/data.js`의 DOM 독립 `verifiedMarks`는 이 계열과 앞서 확인한 `8bw0p`만 판별하며, 계열·등급 충돌과 미확인 계열은 확정하지 않아요. 채팅 수집·목록 필터·복제 카드 갱신·닉네임 표시가 같은 정의를 사용해요. 새 카드에 원본 채널의 인증 배지가 남지 않도록 현재 메타데이터의 등급으로 바꾸거나 제거해요.
 
+### 채팅 메시지의 역할과 본문
+
+채팅 파서는 기존 MAIN 메시지 브리지에서 검증한 같은 메시지의 `profile.userRoleCode`와 인증 정보를 DOM 배지보다 먼저 사용해요. 2026-11-17에 위 공개 번들의 역할 렌더러와 이모티콘 변환을 대조했어요. 방 역할은 `streamer`(방송자), `streaming_channel_manager`·`streaming_chat_manager`(채널·채팅 매니저), `manager`(플랫폼 운영자), `common_user`(일반 시청자)를 구분해요. 역할은 소문자로 정규화한 확인된 값만 비교하며 문자열 포함으로 새 역할을 추정하지 않아요.
+
+인증 종류는 `PARTNER`·`CHALLENGER`·`OFFICIAL`의 정확한 값을 별도 축으로 유지해요. 수집 대상은 방송자·채널/채팅 매니저·파트너·챌린저이며, 플랫폼 운영자라는 이유만으로 매니저로 수집하지 않아요. `verifiedMark:true`만으로 파트너를 추정하지 않아요. 방 역할과 인증 정보를 각각 `known`·`missing`·`invalid`로 구분하고 누락된 축만 기존 작성자 DOM 배지로 보완해요. 명시적인 일반 사용자·인증 없음·지원하지 않는 값·충돌은 낡은 DOM 배지로 승격하지 않아요. 브리지 미준비/비대상인 `null`과 현재 네이티브 메시지 판독 실패인 `{message:null}`도 구별해요.
+
+NORMAL 메시지와 클린봇을 꺼 본문이 보이는 `CBOTBLIND` 메시지는 같은 스냅샷의 `originalContent`와 현재 본문이 대응할 때만 확정해요. 본문은 최대 2,000자이며 초과하면 절단본을 쓰지 않아요. 이모티콘은 원문의 `{:token:}`과 같은 메시지 `extras.emojis`의 확인된 URL을 현재 DOM 이미지의 URL·순서·개수와 대조해요. `nng-phinf.pstatic.net`의 네이티브 `?type=f60_60` 변환을 반영하고, 표시용 토큰과 `textKey`는 기존 DOM 규칙을 유지해요. 매핑이 없다고 확인한 빈 맵은 문자 토큰으로 비교하지만 판독 불가·getter·상속·비허용 URL·상한 초과의 `null` 맵은 문자로 추정하지 않아요. 참조 토큰은 최대 64개, URL은 2,048자, 응답 JSON은 32,768자예요. 응답 상한을 넘으면 본문 메타데이터만 미확인으로 두고 식별값은 유지해요.
+
+같은 네이티브 메시지라도 본문이 아직 이전 행의 내용이면 수집·표시 예외 판정을 보류해요. 블라인드 상태도 네이티브 안내가 화면에 도착하기 전의 일반 본문을 새 메시지로 확정하지 않아요. 이미 일치 검증을 마친 수집 기록은 DOM 재사용만으로 철회하지 않으며, 새 `key·user·time`은 새 메시지예요. 같은 식별값의 재마운트·검증된 역할 보강은 기존 recordId·읽음을 유지해요. 수집 주기 전에 제거된 행은 마지막으로 검증한 스냅샷의 작성자·DOM 역할·본문·명시 ID·재사용 신호가 그대로일 때만 그 스냅샷을 보존해요.
+
+작성자·본문·네이티브 식별값이 일치하는 NORMAL 메시지는 읽는 즉시 수집 역할을 반영해요. 화면 배지로 판별한 공지는 임시 기록으로 남기고, 같은 식별값의 역할·인증이 수집 대상에서 제외되는 것으로 확인되면 그 기록을 즉시 철회해요. 네이티브 역할과 화면 역할이 충돌할 때는 화면 배지를 기록에서 제외해요. 패널 표시는 기존 묶음으로 처리해요. 본문 일치가 확인됐고 역할이나 인증 정보가 누락된 행은 같은 식별값을 공유 타이머에서 최대 두 번 다시 읽어요. 뒤늦게 확정된 공지는 최초 관측 순서에 삽입하며 기존 패널 행과 읽음을 보존해요. 최근 관측 순서와 대기 행에는 각각 500개 한도가 있고, 채널 이동·기능 종료에서 정리해요. 누락된 역할의 DOM 보완은 현재 작성자 영역의 보이는 배지와 확인된 명칭을 사용해요. 컨테이너 클래스만 달라졌다면 현재 채팅 목록에서 닉네임 버튼과 본문이 직접 형제인 구조를 확인한 뒤 기존 메시지 속성을 읽어요.
+
+MAIN이 늦게 준비되면 같은 루트·작성자·본문·재사용 신호·충돌 없는 명시 ID를 가진 DOM 수집 기록에 네이티브 식별값을 연결해요. 이때 확인된 수집 역할로 정정해도 recordId·읽음을 보존해요. 메시지 식별값과 네이티브 수집 대상 증거는 별개이며, 누락된 역할·등급의 DOM 보완에만 의존한 기록은 두 축이 모두 알려진 비대상으로 확정될 때만 철회해요. 잘못된 메타데이터나 판독 실패만으로 기존 기록을 지우지 않으며, 이미 네이티브 수집 대상으로 확인했거나 다른 네이티브 식별값이 연결된 기록은 이 정정 대상이 아니에요.
+
+역할·본문 메타데이터 없이 식별값만 제공하는 기존 형식에서는 위 동일성 조건과 기존 DOM 역할까지 같을 때만 식별값을 연결해요. 이 호환 경로는 역할을 바꾸거나 수집 대상 증거를 확정하지 않으며, 실제 본문 불일치로 보류한 스냅샷에는 적용하지 않아요.
+
+모아보기·문구 숨김 예외·닉네임 표시 예외는 같은 역할 판정을 사용해요. 메타데이터를 확인하려고 WebSocket·fetch를 교체하거나 새 권한·네트워크 요청·영구 저장을 추가하지 않아요. 다시보기에서는 역할 판정만 사용하고 라이브 모아보기·블라인드 원문 복구는 활성화하지 않아요. 이 구현의 자동 회귀와 실제 확장 재로드 검증은 구분해요.
+
 ### 채팅 닉네임 표시
 
-`chatNicknameHidden`은 sync의 기본 꺼짐 옵션이에요. `features/chatNicknameDisplay.js`는 라이브·팝업의 `aside#aside-chatting`, 다시보기의 `aside#vod-aside` 안 `role=log`에서 네이티브 닉네임 버튼 → 메시지용 작성자 span → 닉네임 span → 공통 ellipsis → text의 직속 경로만 가려요. 2026-11-14 실측은 `_nickname_jbnq0_33` → `_is_message_a6uv5_5` → `_nickname_a6uv5_43` → `_ellipsis_1pcsq_6` → `_text_1pcsq_2`예요. 숨김 예외는 [업무 규칙](business-rules.md#채팅과-댓글)을 따르며 같은 ellipsis의 직속 인증 마크와 작성자 span 아래 `wrapper → icon → container → img` 배지의 `alt="스트리머"`·`alt="채팅 운영자"`로 판단해요. 본문·프로필 팝업·다른 채널 이름은 적용 근거가 아니에요.
+`chatNicknameHidden`은 sync의 기본 꺼짐 옵션이에요. `features/chatNicknameDisplay.js`는 라이브·팝업의 `aside#aside-chatting`, 다시보기의 `aside#vod-aside` 안 `role=log`에서 네이티브 닉네임 버튼 → 메시지용 작성자 span → 닉네임 span → 공통 ellipsis → text의 직속 경로만 가려요. 2026-11-14 실측은 `_nickname_jbnq0_33` → `_is_message_a6uv5_5` → `_nickname_a6uv5_43` → `_ellipsis_1pcsq_6` → `_text_1pcsq_2`예요. 숨김 예외는 [업무 규칙](business-rules.md#채팅과-댓글)과 위의 공통 네이티브 역할 판정을 따라요. 검증된 메타데이터가 있으면 현재 닉네임 버튼의 `data-bcct-native-nickname-role` 표식으로 표시 여부를 정하고, 메타데이터가 없는 DOM 경로는 같은 ellipsis의 직속 인증 마크와 작성자 span 아래 `wrapper → icon → container → img` 배지의 `alt="스트리머"`·`alt="채팅 운영자"`로 보완해요. 본문·프로필 팝업·다른 채널 이름은 적용 근거가 아니에요.
 
-이름 text를 CSS로 잘라 시각적으로만 숨기므로 배지·본문·원본 노드·접근성 이름·파서의 작성자 판별은 유지해요. 추가 observer나 메시지별 캐시 없이 새 행·배지 변경·행 재사용에 적용하고 OFF에서는 스타일만 제거해요. 채팅 멀티뷰는 주소가 검증된 칸 문서에 같은 CSS를 반영하며 프레임을 새로 만들지 않아요. 모아보기 패널의 작성자 이름은 별도로 숨기지 않아요.
+이름 text를 CSS로 잘라 시각적으로만 숨기므로 배지·본문·원본 노드·접근성 이름·파서의 작성자 판별은 유지해요. 기존 채팅 controller의 변경 행 관찰과 수명주기를 공유하며 별도 observer·메시지별 캐시는 만들지 않아요. 닉네임 옵션만 켜도 라이브·다시보기의 역할 메타데이터를 읽고, OFF·행 제거·루트 교체·SPA·pagehide에서 표식을 정리해요. MAIN이 늦게 준비되면 문구 숨김과 함께 다시 판정해요. 채팅 멀티뷰는 주소가 검증된 칸 문서에 같은 CSS의 DOM 보완 경로를 반영하며 프레임을 새로 만들지 않아요. 모아보기 패널의 작성자 이름은 별도로 숨기지 않아요.
 
 ### 채팅 문구 숨김의 목록 보충
 
@@ -139,9 +163,13 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 ## 다시보기 멀티뷰의 재생과 시간축
 
-Isolated에서 GET `/service/v3/videos/{videoNo}`의 응답 번호·채널·공개 `REPLAY`를 확인해요. `ABR_HLS`의 보조 재생에는 재생 키가 필요해요. 치지직이 `liveRewindPlaybackJson`을 제공하는 공개 다시보기는 영상 ID·길이·공개 재생 상태가 일치하는 HLS 응답을 사용해요. 방송 시작은 `liveOpenDate`, 구간 끝은 시작에 영상 길이를 더한 값이며 시작 포함·끝 제외예요. 분할 가능성이 있거나 종료 시각이 길이와 충돌하는 응답은 시각 확인 불가예요. 실제 플레이어 길이와 응답 길이의 차이가 2초를 넘는 경우에도 동기화하지 않아요.
+Isolated에서 GET `/service/v3/videos/{videoNo}`의 응답 번호·채널·공개 `REPLAY`를 확인해요. `ABR_HLS`의 보조 재생에는 재생 키가 필요해요. 치지직이 `liveRewindPlaybackJson`을 제공하는 공개 다시보기는 영상 ID·길이·공개 재생 상태가 일치하는 HLS 응답을 사용해요. 상세 정보가 영상 길이를 정수 초로 주면 리와인드 길이를 초 단위로 반올림해 대조하며, 리와인드 응답 길이는 상세보다 최대 10초 짧거나 2초 긴 범위까지 허용하고(2026-11-26 공개 리와인드 표본에서 `meta.duration`이 실제 HLS 길이·상세보다 세그먼트 1개 이상 짧은 사례 반영), 플레이어에는 원래 정밀도의 값을 전달해요. 방송 시작은 `liveOpenDate`, 구간 끝은 시작에 영상 길이를 더한 값이며 시작 포함·끝 제외예요. 분할 가능성이 있거나 종료 시각이 길이와 충돌하는 응답은 시각 확인 불가예요. 실제 플레이어 길이와 응답 길이의 차이가 2초를 넘는 경우에도 동기화하지 않아요.
+
+채널을 선택한 순간의 메인 미디어 ID·재생 위치·길이를 읽고 상세 응답과 대조해 후보의 기준 방송 시각을 정해요. 메인 종료점에서도 타임라인을 읽고 공통 구간으로 돌아갈 수 있어요. 이동할 목적지는 해당 구간 끝보다 앞서야 해요.
 
 채널 검색은 `/service/v1/search/channels`의 채널 ID를 검증해요. `/service/v1/channels/{channelId}/videos`의 `LATEST`·`REPLAY` 목록에서는 메인 방송 시작보다 이전에 게시된 항목을 건너뛰어요. 상세 응답에서 선택한 채널과 두 영상의 방송 구간이 실제로 겹치는지 확인해요. 경계 시각만 같은 경우 겹치는 구간은 0초예요.
+
+공개 다시보기의 구간 검증과 재생 지원 판정은 별도로 해요. 검색과 재생은 같은 함수로 리와인드의 HLS 주소와 화질 트랙을 검증해요. 재생 목록은 `ex-nlive-slitvod-streaming.navercdn.com`과 `light-slit.akamaized.net`의 HTTPS `/chzzk/` 경로에 있는 `.m3u8` 파일을 허용하고 서명 쿼리를 유지해요. 리와인드 소스가 없고 `vodStatus`가 `UPLOAD` 또는 `NONE`이면 재생 준비 중으로 안내해요. 주소로 추가한 항목은 같은 자리에서 다시 시도할 수 있어요. 채널 검색은 방송 시간이 겹치는 재생 가능한 후보를 우선하고, 그런 후보가 없으면 준비 중과 미지원 형식을 구분해요. 조회 실패와 방송 시각 미상도 각각 안내해요. 주소가 달라도 이미 추가한 미디어 ID와 같으면 중복 항목의 임시 칸을 즉시 정리해요.
 
 MAIN에서는 `#player_layout.chzzk_player.type_vod`에 속한 원본 플레이어와 현재 미디어 ID를 확인해요. 탭 문서에서 검증한 SDK의 보조 슬롯을 최대 다섯 개까지 재사용하고, 동기화 기준은 원본 하나에 연결해요. 보조의 `vod3:` 소스는 자신의 미디어 ID·재생 키·암호화 형식으로 만들어요. `liveRewindPlaybackJson`을 쓸 때는 확인된 치지직 CDN의 HLS 주소와 화질 정보만 뽑아 보조 `live:` 재생기에 넣고 로딩을 시작해요. 재생 주소와 키는 메모리에서만 사용해요. 삭제 때 네이티브 소스를 비우고 진행 중이던 로딩·재생이 끝나며 버퍼가 비어야 슬롯을 재사용해요. `currentSrc` 문자열 자체는 해제의 판정 기준이 아니에요.
 
@@ -184,14 +212,16 @@ MAIN에서는 `#player_layout.chzzk_player.type_vod`에 속한 원본 플레이�
 
 - 요청: `{type:"cheese-spanner:settings-store",version:1,area:"sync"|"local",values,expected?}`. 최상위 필드는 이 다섯 개만 허용해요. `values`는 1~8개 키예요.
 - 발신자: 같은 확장 ID, 음이 아닌 정수 `tab.id`, `frameId` 0, `sender.url`의 출처가 정확한 `https://chzzk.naver.com`(자격 증명 없음).
-- 허용 키: sync는 `betterchzzkPinnedFollowingChannelIds`(최대 64개, 중복 없는 채널 ID), `betterchzzk:following-folders:v1`(폴더 모델 `parseState` 통과), `skipSeconds`·`ambientIntensity`·`followingPreviewSoundEnabled`·`videoRecorderFolder`·`chatKeywordFilterEnabled`·`chatKeywordFilterWords`·`chatKeywordFilterApplyMode`·`chatKeywordFilterMatchMode`·`chatKeywordFilterExactWords`(옵션 정규화와 같은 값). local은 세 패널 크기 키, `betterchzzk:chat-multiview:v1`(채팅 멀티뷰 모델 `parseConfig` 통과), `betterChzzkMultiviewDelay:{32자리}`(`{version:1,delaySeconds}` 또는 `{version:2,basis:"live-edge-clock",delaySeconds}`), `betterChzzkMultiviewQuality:{32자리}`(0~8640 정수). 그 밖의 키는 `key-not-allowed`예요.
+- 허용 키: sync는 `betterchzzkPinnedFollowingChannelIds`(최대 64개, 중복 없는 채널 ID), `betterchzzk:following-folders:v1`(폴더 모델 `parseState` 통과), `skipSeconds`·`ambientIntensity`·`followingPreviewSoundEnabled`·`chatKeywordFilterEnabled`·`chatKeywordFilterWords`·`chatKeywordFilterApplyMode`·`chatKeywordFilterMatchMode`·`chatKeywordFilterExactWords`(옵션 정규화와 같은 값). local은 팔로잉 목록 펼침 선택 `betterchzzk:following-list-state`, 세 패널 크기 키, `betterchzzk:chat-multiview:v1`(채팅 멀티뷰 모델 `parseConfig` 통과), `betterChzzkMultiviewDelay:{32자리}`(`{version:1,delaySeconds}` 또는 `{version:2,basis:"live-edge-clock",delaySeconds}`), `betterChzzkMultiviewQuality:{32자리}`(0~8640 정수). 그 밖의 키는 `key-not-allowed`예요.
 - 채팅 문구 조건: `chatKeywordFilterApplyMode`는 `all`(기본)·`individual`, `chatKeywordFilterMatchMode`는 `contains`(기본)·`exact`예요. `chatKeywordFilterExactWords`는 개별 조건에서 완전 일치로 비교할 문구 목록이며 기본 빈 문자열이에요. 나머지는 포함이고 전체 적용 중에도 개별 목록을 보존해요. 문구 두 목록 모두 기존 최대 50개·100자·2,000자 검증을 따르며 기존 설정 백업에 포함돼요. 메뉴는 다섯 키의 raw 기대값을 함께 보내고, 옵션 화면의 문구·개별 조건 편집은 두 키를 함께 소유해요.
 - `expected`: `{키: {value}|{absent:true}}`. 잠금 안에서 최신 값을 읽어 다르면 쓰지 않고 `{ok:false,error:"conflict",current}`로 응답해요.
-- 응답: `{ok:true}` 또는 `{ok:false,error}`. 오류는 `untrusted-sender`, `invalid-request`, `key-not-allowed`, `invalid-value`, `conflict`, `storage-read-failed`, `storage-write-failed`, `unexpected-error`이고 클라이언트는 응답이 없으면 `unavailable`로 reject해요.
+- 응답: `{ok:true}` 또는 `{ok:false,error}`. 오류는 `untrusted-sender`, `invalid-request`, `key-not-allowed`, `invalid-value`, `conflict`, `multiview-limit`, `storage-read-failed`, `storage-write-failed`, `unexpected-error`이고 클라이언트는 응답이 없으면 `unavailable`로 reject해요.
 - 순서: 워커 안에서 도착 순서대로 처리한 뒤 잠금을 얻어요. 시청 기록·카테고리 제외·새 기능 안내 큐와 분리돼요.
 - 고정 채널 목록: 사이드바는 마지막으로 읽은 원본 값을 `expected`로 보내고, `conflict`면 `current`에 이번 고정·해제 한 건만 다시 얹어 최대 3회 다시 보내요. 실패하면 그 조작만 화면에서 빼고 `chrome.storage`에 직접 쓰지 않아요.
 - 옵션 페이지 저장: 클릭 시점에 이 화면이 소유한 키(직접 조작한 컨트롤과 기준값과 다른 키, 배속 단축키 3개는 묶음)를 정하고, 잠금 안에서 최신 값을 다시 읽은 뒤 그 키만 써요. 저장 기록에 없던 키는 현재 실효값으로 함께 써요. 건드리지 않은 키는 다른 곳의 최신 값을 유지하고 `storage.onChanged`로 폼과 기준값을 갱신해요. 같은 키가 다른 곳에서도 바뀌었으면 이 화면에서 고른 값을 저장하고 저장 메시지로 알려요. 저장이 실패하면 기준값을 바꾸지 않아요.
 - 방송 알림 대상(`betterchzzk:live-start-channels`)은 방송 큐의 순서를 유지하면서 읽기-수정-쓰기 구간만 같은 잠금 안에서 해요. 채널 정보 조회는 잠금 밖에서 먼저 해요.
+
+팔로잉 목록 펼침은 워커가 잠금 안에서 바뀐 항목만 기존 값에 합쳐요. 멀티뷰의 채널별 화질과 딜레이는 각각 최대 4,000개까지 저장해요. 한도에서 기존 채널 값은 갱신할 수 있고 새 키를 더하는 설정 요청과 파일 가져오기는 쓰기 전에 거부해요.
 
 ## 설정 파일
 
@@ -232,11 +262,13 @@ local `betterchzzkFollowingLiveTitleHistory`(키 이름은 호환 식별자)는 
 | `data-cheese-spanner-volume-wheel-options`의 `{enabled, step}` + window `cheese-spanner:volume-wheel-options`    | 현재 메인 볼륨 영역의 휠 처리                                                                                                              | 재생 경로·대상 밖에서는 원래 이벤트를 유지해요                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | message container의 `cheese-spanner:chat-timestamp-source-request`                                               | `data-bcmt-source-time`의 유효한 밀리초 시각                                                                                               | 원본 시각이 없거나 범위가 잘못되면 속성을 지워요. ready 이벤트로 로드 순서 차이를 처리해요                                                                                                                                                                                                                                                                                                                                                                     |
 | VOD message container의 `cheese-spanner:chat-user-source-request`                                                | `data-bcoc-source-user`의 작성 계정 해시(`[A-Za-z0-9_-]{1,128}`)                                                                           | 값이 없거나 형식이 다르면 속성을 지워요. 현재 계정 해시와 같을 때 `data-bcoc-own` 표식만 붙이고 저장·전송하지 않아요                                                                                                                                                                                                                                                                                                                                           |
-| live message container의 `cheese-spanner:chat-blind-source-request`                                              | `data-bcct-source-message`의 `{key,user,time,status,nickname}` 또는 `null`, `data-bcct-source-original`의 원문(최대 2,000자)               | key 1~256자·user 해시 1~128자·2020년~현재+12시간의 정수 time·profile.userIdHash 일치·nickname 1~200자를 검증해요. 요청 쪽은 화면 작성자와 행·본문·라우트의 불변을 재확인하고 두 속성을 즉시 지워요. NORMAL·불완전·미지원 상태·직전 방송의 식별값·원문 없음은 DOM 캐시로 대신하지 않아요                                                                                                                                                                        |
+| live/VOD message container의 `cheese-spanner:chat-blind-source-request`                                          | `data-bcct-source-message`의 식별값·역할·본문 메타데이터 또는 `null`, `data-bcct-source-original`의 라이브 원문(최대 2,000자)              | key 1~256자·user 해시 1~128자·2020년~현재+12시간의 정수 time·profile.userIdHash 일치·nickname 1~200자를 검증해요. 요청 쪽은 화면 작성자와 행·본문·라우트의 불변을 재확인하고 두 속성을 즉시 지워요. NORMAL·불완전·미지원 상태·직전 방송의 식별값·원문 없음은 DOM 캐시로 대신하지 않아요                                                                                                                                                                        |
 | 채팅 행의 `data-bcwa-user` + `cheese-spanner:watch-activity-source`                                              | `data-bcwa-source`에 본인 메시지면 `{id, at, kind, text, amount}`, 다른 작성자 메시지면 `{otherAuthor:true}` 또는 `{otherAuthor:true, id}` | 요청 계정과 메시지 작성 계정이 다르면 본문·시각·종류·금액 필드 없이 표식만 남기고, 작성 계정 해시가 형식에 맞고 time·type이 안전한 정수일 때만 `id`(`작성 계정 해시:time:type`, 본인 활동 ID와 같은 형식이라 작성자·시각·종류를 담아요)를 붙여요. React 데이터가 없거나 본인 메시지의 상태·시각(2020년 이후, 현재+5분 이내)·지원 활동 종류가 맞지 않으면 결과를 남기지 않아요. 요청 계정 형식이 틀리면 기존 결과를 지워요. 읽은 임시 속성은 요청 쪽이 제거해요 |
 | 현재 팔로잉 보충 링크의 `cheese-spanner:following-navigate`                                                      | 페이지 라우터가 처리한 경우 이벤트 취소로 응답해요                                                                                         | 오래된 행·지원되지 않는 이동은 처리 성공으로 표시하지 않아요                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 라이브에서 치지직의 블라인드 안내가 표시되면 채팅 루트에 연결된 `gameChatClient.config.streamingChannelId`를 경로와 대조하고 `messageList`의 최근 200건에서 행의 `key`·`user`·`time`과 일치하는 메시지를 찾아요. 같은 화면 작성자와 메시지의 최신 상태·원문을 읽고 응답 전에 행과 목록 항목을 다시 확인해요. 2026-11-15 실제 채팅 팝업에서 임시 제한 뒤 행 React 속성은 `NORMAL`에 머물렀고 현재 목록의 메시지는 `HIDDEN`으로 전환됐어요. 이 경우 최신 항목에서 원문을 복구하며, 일치하는 목록 항목이 없으면 검증된 행 데이터로 판단해요.
+
+채팅 요청의 detail은 `[author, visibleText, keepOriginal]`이며 기존 2항목 요청도 유지해요. 응답의 기존 `key/user/time/status/nickname`에 `roleCode/roleState`, `verifiedMarkType/verifiedMark/verifiedState`, `normalText/normalEmojis`를 추가해요. 판정과 상한은 [채팅 메시지의 역할과 본문](#채팅-메시지의-역할과-본문)을 따라요. NORMAL 본문과 역할은 원문 복구 OFF에서도 읽되 그 요청은 블라인드 원문 캐시를 채우지 않아요. VOD에서는 원문 속성·캐시를 제공하지 않아요. 요청 전후 메시지·역할·본문·이모티콘·현재 행·라우트가 바뀌면 응답을 거절하고 임시 속성은 소비 후 지워요.
 
 자동 화질 state는 기존 enabled·quality만 전달해요. 폐기한 lowLatencyEnabled 입력과 liveLowLatencyEnabled 저장값은 제어를 활성화하지 않아요. 독립 저지연 결과와 멀티뷰 메인 딜레이 전달 속성은 더 이상 발행하지 않아요. 기존 화질 요청·응답과 읽기 전용 스트림 정보 계약은 유지해요.
 
@@ -256,11 +288,13 @@ local `betterchzzkFollowingLiveTitleHistory`(키 이름은 호환 식별자)는 
 
 ### 현재 스트림 정보 읽기
 
-isolated는 현재 메인 video의 `data-bcsi-request`에 `{version:1, requestId}`를 쓰고 같은 video에서 `cheese-spanner:stream-info:read` 이벤트를 발생시켜요. requestId는 길이 1–128의 문자열이며 다른 요청 필드를 받지 않아요. MAIN은 document capture 리스너에서 현재 메인·소유권·라이브 경로를 확인하고 같은 video의 `data-bcsi-result`에 동기로 응답해요. 잘못된 요청이나 다른 video에는 응답하지 않아요.
+isolated는 현재 메인 video의 `data-bcsi-request`에 `{version:1, requestId}`를 쓰고 같은 video에서 `cheese-spanner:stream-info:read` 이벤트를 발생시켜요. requestId는 길이 1–128의 문자열이며 다른 요청 필드를 받지 않아요. MAIN은 document capture 리스너에서 현재 메인·경로·소유권을 확인하고 같은 video의 `data-bcsi-result`에 동기로 응답해요. 잘못된 요청이나 다른 video에는 응답하지 않아요.
 
 결과 필드는 `{version, requestId, route, status, reason, mode, trackId, sourceToken, trackWidth, trackHeight, onLive}`예요. version은 1, route는 pathname, status는 `ready | unavailable`이에요. ready의 reason은 `ok`이고, unavailable의 reason은 `unsupported-route | player-missing | ambiguous-player | track-missing | player-changed`예요. mode는 `low-latency | standard | unknown`이며 저지연은 확인된 `low-latency`·`low-latency-p2p`, 일반은 `main`·`p2p` 종류에만 대응해요.
 
 trackId는 확인된 문자열 또는 null, 크기는 유효한 양수 숫자 또는 null, onLive는 확인한 boolean 또는 null이에요. sourceToken은 메인·provider·소스를 구분하는 페이지 내 임시 문자열이며 원격 미디어 URL이나 React 객체를 넘기지 않아요. unavailable에서는 mode가 unknown이고 나머지 트랙·소스·크기·onLive는 모두 null이에요. 읽는 동안 소유권이 바뀌면 player-changed로 처리하고, 같은 pane을 공유해도 서로 다른 소유 플레이어가 있으면 모호한 결과예요.
+
+메인 다시보기에서 현재 영상과 플레이어의 소유 관계가 확인되면 `candidateHeights`로 검증된 트랙 높이 목록을 반환해요. 숫자 높이만 중복 없이 내림차순으로 전달해요. 선택적 `qualityFallback`은 다음 조건에서 반환해요. 자동 화질 목표가 480p일 때 트랙 목록의 모든 항목과 수동 트랙의 높이를 확인해요. 선택 가능한 480p가 없고 그 아래 최선의 트랙을 재생 중일 때 그 높이를 반환해요. 스트림 정보는 실제 재생 높이와 일치할 때 480p 미제공 사유를 표시해요. 이 읽기 자체는 화질을 바꾸지 않아요.
 
 isolated는 version·requestId·route·값 형식을 확인한 뒤 두 임시 속성을 지워요. 응답이 없거나 잘못되면 현재 방식은 확인 불가예요. 과거 `data-cheese-spanner-low-latency-result`를 현재 선택의 근거로 사용하지 않아요. 이 조회는 제어 래퍼 설치·선택·재생·seek·배속 변경을 실행하지 않고, 자동 화질 설정이 꺼져도 작동해요. DOM 이벤트에는 확장 저장소·탭·네트워크 같은 특권 명령을 연결하지 않아요.
 
@@ -272,9 +306,9 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 ### 녹화 다운로드와 저장 폴더
 
-플레이어의 **녹화 저장 폴더** 행은 신뢰된 클릭·키보드 동작에서 즉시 `showDirectoryPicker`를 호출해요. 이 선택은 현재 문서의 isolated 메모리에만 남고 워커의 기본 폴더보다 우선해요. 녹화 시작 시 선택을 고정하며 같은 조각 크기·순서·10초 쓰기 제한을 적용해 직접 파일을 쓰고 닫아요. 워커 메시지는 이 직접 저장 경로에 사용하지 않아요. 새로고침 뒤에는 아래 확장 기본 저장 경로를 사용해요.
+플레이어의 **녹화 저장 폴더**는 신뢰된 클릭·키 입력에서 확장 설정의 녹화 항목을 열어요. 사용자가 확장 설정에서 선택한 폴더의 권한을 워커가 확인하고 녹화 파일을 열어요. 파일명은 방향 제어 문자와 Windows 예약 장치명을 거부해요. 동일 이름은 쓰기 잠금 아래 번호를 붙여 구분해요.
 
-- 요청: `{type:"cheese-spanner:video-recorder",version:1,op,...}`. 같은 확장 ID, `sender.tab`이 있는 최상위 프레임(frameId 0), 정확한 `https://chzzk.naver.com` 출처만 받아요. 그 밖은 `untrusted-sender`, 다른 version은 `unsupported-version`, 다른 op는 `unknown-operation`이에요.
+- 녹화 메시지는 `{type:"cheese-spanner:video-recorder",version:1,op,...}` 형식이에요. 일반 치지직 최상위 문서의 확장 ID·탭 ID·문서 ID·HTTPS 출처를 확인해요. 발신자 거부는 `untrusted-sender`, 버전 불일치는 `unsupported-version`, 미지원 명령은 `unknown-operation`이에요.
 - `status` 응답: `{ok:true,folder,downloads}`. folder는 sync `videoRecorderFolder`를 `normalizeDownloadFolder`로 다시 정규화한 값, downloads는 선택 권한 보유 여부예요.
 - 탐색기로 선택한 폴더가 있으면 `start` 응답은 `{ok:true,id,destination:"directory",folder,fileName}`이에요. `folder`는 표시용 이름이며 절대 경로·핸들은 콘텐츠에 보내지 않아요. 파일 이름은 한국 시간의 녹화 시작일과 현재 방송 상세에서 확인한 제목·스트리머 이름이며, 같은 이름이 있으면 `(1)`부터 번호를 붙여요. 생성은 워커 안에서 직렬화해요. 이 경로는 attachment 탐색 없이 `ready`·`write`·`finish`로 직접 파일을 쓰고 닫아요. 선택을 읽거나 접근하지 못하면 `directory-unavailable`·`directory-permission`, 쓰기·닫기 실패는 실패 응답으로 끝내요. 아래 URL 응답은 다운로드 방식일 때만 사용해요.
 - `folder-settings`는 검증한 치지직 최상위 콘텐츠에서 확장 `options.html#recording-folder` 탭을 열어요. 폴더 선택 자체는 그 옵션 페이지의 사용자 클릭에서 수행해요. `status`는 직접 선택이 있으면 표시용 `directory`와 `directoryGranted`를 추가해요.
@@ -295,11 +329,13 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 | 추가      | `{kind:"add",category:{categoryType,categoryId,categoryValue}}` |
 | 개별 해제 | `{kind:"remove",categoryType,categoryId}`                       |
 
-유형은 1~32 UTF-16 code unit의 `[A-Z][A-Z0-9_]*` 문자열이고 ID·표시 이름은 각각 1~200 UTF-16 code unit이에요. 제어 문자·공백만 있는 값은 거부하며 ID `.`·`..`도 거부해요. ID와 이름을 임의로 자르거나 ID의 대소문자를 바꾸지 않아요. 저장 상태의 카테고리 항목과 추가 category에는 세 카테고리 필드만 허용해요. 태그 제외는 같은 형식의 `{categoryType:"CHEESE_SPANNER_TAG",categoryId:<정규화 태그>,categoryValue:<표시 태그>}`예요. ID는 앞의 `#` 제거·연속 공백 축약·NFC·소문자 변환을 거친 1~100자 값이고, 카드의 태그도 같은 정규화로 전체 일치만 비교해요. 원본 카드 태그는 같은 출처 링크의 `tags` query 값이에요. 이 예약 유형은 치지직 검색 결과에서 받지 않아요.
+유형은 1~32 UTF-16 code unit의 `[A-Z][A-Z0-9_]*` 문자열이고 ID·표시 이름은 각각 1~200 UTF-16 code unit이에요. 제어 문자·공백만 있는 값은 거부하며 ID `.`·`..`도 거부해요. ID와 이름을 임의로 자르거나 ID의 대소문자를 바꾸지 않아요. 저장 상태의 카테고리 항목과 추가 category에는 세 카테고리 필드만 허용해요. 태그 제외는 같은 형식의 `{categoryType:"CHEESE_SPANNER_TAG",categoryId:<정규화 태그>,categoryValue:<표시 태그>}`예요. ID는 앞의 `#` 제거·연속 공백 축약·NFC·소문자 변환을 거친 1~100자 값이고, 카드의 태그도 같은 정규화로 전체 일치만 비교해요. 원본 카드에서는 같은 출처 링크의 `tags` 값, 같이보기·드롭스 링크와 링크 없는 태그 배지를 읽어요. 대회명은 현재 `/watchparty/{번호}` 링크의 글자예요. 예약 유형은 카테고리 이름 검색 응답에서 받지 않아요.
 
 같은 확장 ID, 음이 아닌 안전한 정수 tab.id, frameId 0과 치지직 발신 출처를 요구해요. SPA 이동 전 문서 URL인 sender.url과 Chrome이 제공하는 현재 sender.tab.url을 구분하고, 현재 탭 URL이 정확한 `https://chzzk.naver.com/lives`인지 검사해요. 현재 탭 URL이 없거나 잘못되면 거절해요. 끝 슬래시·query·hash는 허용하고 다른 경로·하위 프레임·다른 출처·자격 증명·명시한 포트는 거부해요. 본문이 주장하는 출처·탭 ID는 허용 근거가 아니에요.
 
 성공은 `{ok:true,state:{version:1,revision,categories}}`, 실패는 `{ok:false,error:"<코드>"}`예요. local 키 `betterchzzkCategoryExclusionsV1`에 같은 state를 보관하며 state에는 version·revision·categories만 허용해요. revision은 음이 아닌 안전한 정수이고 categories는 중복 없는 최대 100개의 카테고리 배열이에요. 키가 실제로 없을 때만 revision 0·빈 배열을 읽기 기본값으로 사용하며 읽기 자체는 저장하지 않아요.
+
+전체 방송 진입 시 발신 탭 확인·워커 응답·저장소 읽기가 실패하면 `get`을 최대 세 번 다시 요청해요. 그 뒤에도 실패하면 불러오기 오류를 표시하고, 페이지가 표시되거나 탭이 다시 보일 때 한 번 더 읽어요. 손상된 자료는 즉시 별도로 표시해요. 정상 목록을 먼저 받은 뒤 도착한 읽기 실패는 무시하고, 경로를 떠나거나 기능이 꺼지면 대기 중인 재조회를 취소해요.
 
 | 오류 코드              | 거부·실패 조건                                                           |
 | ---------------------- | ------------------------------------------------------------------------ |
@@ -363,7 +399,7 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 패키지 자료는 설치 버전과 문자열로 정확히 일치해야 해요. 첫 자료는 1.4.1이며 버전별 title·summary·cards를 포함해요. cards는 id·title·summary·instructions·target·settingsTarget을 가지며 목적지는 panels, history, stream으로 한정해요. cards가 비어 있으면 요약만 표시해요.
 
-요청은 type=cheese-spanner:update-guide, protocol=1, action, guideVersion을 사용해요. claim/commit/release에는 문서마다 생성한 clientId를 넣어요. claim은 ok:true, show:false와 예약 성공 시 token을 반환하고 commit/release는 같은 token을 받아요. 실제 표시 권한은 commit의 ok:true, show:true뿐이에요. 오류는 ok:false, show:false이며 자유 URL·선택자나 다른 탭 ID를 받지 않아요.
+요청은 type=cheese-spanner:update-guide, protocol=1, action, guideVersion을 사용해요. claim/commit/release에는 문서마다 생성한 clientId를 넣어요. claim은 ok:true, show:false와 예약 성공 시 token을 반환하고 commit/release는 같은 token을 받아요. 다른 탭이 아직 소비하지 않은 예약을 보유하면 `reserved:true`를 반환해요. 대기 탭은 화면에 초점이 있고 안내를 표시할 수 있을 때만 다시 요청해요. 실제 표시 권한은 commit의 ok:true, show:true뿐이에요. 오류는 ok:false, show:false이며 자유 URL·선택자나 다른 탭 ID를 받지 않아요.
 
 예약은 탭·documentId에 결합하고 documentId가 없으면 검증한 탭·frame·URL·clientId에 결합해요. 30초 만료, 옵션 변경, 문서 변경, 워커 재시작으로 낡은 예약을 승인하지 않아요. local 키 betterchzzk:update-guide-state에는 schemaVersion:1, version, status 한 건을 저장하며 status는 pending, seen, suppressed예요. 읽기 오류·손상 상태는 자동 표시를 중단해요.
 
@@ -375,4 +411,4 @@ open-settings의 target은 panels, history, stream, categories뿐이고 확장 o
 
 ## 전체 방송 목록 새로고침
 
-`features/liveListRefreshPage.js`는 MAIN에서 `/lives`의 `button#RECOMMEND[role=tab]` 바로 뒤에 버튼을 붙여요. 2026-11-08 공개 `index-BcgE118t.js`에서 확인한 QueryClientProvider의 `client`와 `["all-lives", routeKey, filters]` 중 활성 쿼리 하나만 exact refetch하며 정렬·페이지 주소를 바꾸지 않아요. 직접 네트워크·확장 권한은 사용하지 않아요. 클릭 후 1초 동안 비활성화·아이콘 회전을 적용해요. 성공 시 `cheese-spanner:live-list-refreshed`로 목록 도구의 오래된 메타데이터·집계·추가 카드를 무효화하고 검색·필터 조건은 보존해요. 이동·버튼 교체 후 늦은 완료는 무시해요. 공개 코드 확인과 실제 Chrome 화면 검증은 별개예요.
+`features/liveListRefreshPage.js`는 MAIN에서 `/lives`의 `button#RECOMMEND[role=tab]` 바로 뒤에 버튼을 붙여요. 2026-11-08 공개 `index-BcgE118t.js`에서 확인한 QueryClientProvider의 `client`와 `["all-lives", routeKey, filters]` 중 활성 쿼리 하나만 exact refetch하며 정렬·페이지 주소를 바꾸지 않아요. 직접 네트워크·확장 권한은 사용하지 않아요. 클릭 후 1초 동안 비활성화·아이콘 회전을 적용해요. 성공 시 `cheese-spanner:live-list-refreshed`로 목록 도구의 오래된 메타데이터·집계·추가 카드를 무효화하고 검색·필터 조건은 보존해요. 완료를 알리기 전에 같은 버튼·경로·정렬·활성 목록 쿼리인지 확인해요. 새 요청을 시작하거나 정렬·필터가 바뀌면 버튼 설명을 기본 문구로 돌려요. 요청 중 원래 목록으로 돌아와도 이전 요청의 완료는 무시해요. 공개 코드 확인과 실제 Chrome 화면 검증은 별개예요.

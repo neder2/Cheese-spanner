@@ -1475,3 +1475,21 @@ test("an open history page reflects activity immediately and ignores an older pe
     document.getElementById("activityViewTab").click();
     assert.match(document.getElementById("activitySummary").textContent, /내 채팅 0개/);
 });
+
+test("collector checks activity owner, time and kind against the identity before accepting the row", async (t) => {
+    const f = await collectorFixture(t);
+    let sample;
+    f.dom.window.document.addEventListener("cheese-spanner:watch-activity-source", (event) => {
+        if (sample) event.target.setAttribute("data-bcwa-source", JSON.stringify(sample));
+    });
+    for (const id of [`other:${NOW + 100}:1`, `viewer:${NOW + 101}:1`, `viewer:${NOW + 100}:10`]) {
+        sample = { id, at: NOW + 100, kind: "chat", text: "테스트", amount: 0 };
+        f.append(message({ time: NOW + 100 }));
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(f.captured.length, 0);
+    sample = null;
+    f.append(message({ time: NOW + 200 }));
+    await waitForCondition(() => f.captured.length === 1);
+    assert.equal(f.captured[0].value.id, `viewer:${NOW + 200}:1`);
+});

@@ -42,6 +42,29 @@ test("newer absolute snapshots add only their delta and overlapping tabs remain 
     assert.equal(context.CheeseSpanner.utils.getUniqueWatchTotals(entry, entry.sessionDetails).watchedSeconds, 90);
 });
 
+test("a short pause remains outside watched time after writing, deduplicating and merging a backup", () => {
+    const { store, backup, merger, context } = load();
+    const current = store.applyMutation({}, snapshot({ seconds: 45 }), NOW).history;
+    const resumed = snapshot({ seconds: 89 });
+    const end = ENTERED + 90500;
+    resumed.session.leftAt = end;
+    resumed.entry.lastWatchedAt = end;
+    const ranges = [
+        { startAt: ENTERED, endAt: ENTERED + 45000 },
+        { startAt: ENTERED + 46500, endAt: end },
+    ];
+    resumed.session.watchedRanges = ranges;
+    const latest = store.applyMutation(current, resumed, NOW).history;
+    const restored = merger.mergeBackup(current, createFile(backup, latest), { now: NOW });
+    for (const history of [latest, restored.history]) {
+        const record = history.entries["live:100"];
+        assert.deepEqual(plain(record.sessionDetails[0].watchedRanges), ranges);
+        const totals = context.CheeseSpanner.utils.getUniqueWatchTotals(record, record.sessionDetails);
+        assert.equal(totals.watchedSeconds, 89);
+        assert.equal(totals.dailySeconds[DAY], 89);
+    }
+});
+
 test("ambiguous historical totals keep the entire current record and report why; identical historical totals are unchanged", () => {
     const { store, backup, merger } = load();
     const current = store.applyMutation({}, snapshot({ activities: [chat(1, "donation")] }), NOW).history;
@@ -187,6 +210,8 @@ test("only file-scoped restored sessions and chats survive old alias deletion; u
         snapshot({ sessionId: "new", enteredAt: NOW - 20000, seconds: 10 }),
         NOW
     ).history;
+    // Establish the provisional session before linking it. A later deletion of its alias applies to the live record.
+    current = store.applyMutation(current, snapshot({ id: sourceId, sessionId: "deleted", seconds: 1 }), NOW).history;
     current = store.applyMutation(
         current,
         { kind: "migrateRecordId", sourceRecordId: sourceId, targetRecordId: "live:100" },

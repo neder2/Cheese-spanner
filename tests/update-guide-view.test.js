@@ -387,7 +387,7 @@ test("the notice looks the same with CHZZK theme variables and with extension pa
             const other = options.declarations.get(key);
             if (/\{ font-family \}$/.test(key) && value !== "inherit") {
                 assert.match(value, /^"CheeseSpanner Pretendard",/, `${theme} CHZZK ${key} uses the bundled font`);
-                assert.match(other, /^"Pretendard Variable",/, `${theme} options ${key} uses the bundled font`);
+                assert.match(other, /^"CheeseSpanner Pretendard",/, `${theme} options ${key} uses the bundled font`);
                 continue;
             }
             if (/:focus-visible \{ outline \}$/.test(key)) {

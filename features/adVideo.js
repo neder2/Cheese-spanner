@@ -8,9 +8,6 @@
     let optionsLoaded = false;
     function publishState() {
         if (!optionsLoaded || !document.documentElement) return;
-        if (globalThis.chrome?.runtime?.id) {
-            document.documentElement.setAttribute("data-cheese-spanner-ad-video-extension-id", chrome.runtime.id);
-        }
         document.documentElement.setAttribute(STATE_ATTR, enabled ? "1" : "0");
         document.dispatchEvent(new Event(STATE_EVENT));
     }

@@ -2,7 +2,7 @@
  * features/vodComments/model.js — VOD 댓글의 순수 데이터 정규화와 계산을 제공한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
- * 의존: 없음. DOM, 네트워크, storage를 다루지 않는다.
+ * 의존: shared/data.js의 공용 댓글 응답 판독기. DOM, 네트워크, storage를 다루지 않는다.
  */
 (() => {
     "use strict";
@@ -11,15 +11,14 @@
     const namespace = (root.vodComments = root.vodComments || {});
     if (namespace.model) return;
 
+    const { parseChzzkCommentPage: parseCommentPage, validateChzzkCommentResponse: validateCommentResponse } =
+        root.utils;
     const COMMENT_PAGE_SIZE = 10;
     const MAX_COMMENTS_PER_ORDER = 300;
     const MAX_REPLIES_PER_COMMENT = 50;
     const MAX_REPLIES_PER_ORDER = 300;
-    const COLLAPSED_COMMENT_MAX_CHARS = 420;
-    const COLLAPSED_COMMENT_MAX_LINES = 12;
+    const COLLAPSED_COMMENT_MAX_CHARS = 250;
     const DEFAULT_ORDER = "POPULAR";
-    const TIMECODE_RE = /^(?:\d{1,2}:)?\d{1,2}:\d{2}$/;
-    const TIMECODE_SCAN_RE = /(?:^|[\s([{])((?:\d{1,2}:)?\d{1,2}:\d{2})(?=$|[\s)\]},.!?])/g;
     const SORT_OPTIONS = Object.freeze([
         Object.freeze({ label: "인기순", order: "POPULAR" }),
         Object.freeze({ label: "최신순", order: "DESC" }),
@@ -27,6 +26,10 @@
     ]);
     const IMAGE_ATTACHMENT_TYPES = Object.freeze(["PHOTO", "STICKER", "EMOTICON"]);
     const DEFAULT_IMAGE_BASE_URL = "https://chzzk.naver.com/";
+    const CHAPTER_TIMECODE = /(?:^|[\s([（［|])((?:\d{1,2}:)?\d{1,2}:\d{2})(?!:\d)(?=$|[\s)\]）］|,.:：–—~～-])/g;
+    const CHAPTER_TITLE_SEPARATOR = /^[\s()[\]（）［］|,.:：–—~～-]+|[\s()[\]（）［］|,.:：–—~～-]+$/g;
+    const MAX_COMMENT_CHAPTERS = 100;
+    const MIN_AUTOMATIC_CHAPTERS = 3;
 
     function compactText(value) {
         return String(value || "")
@@ -37,23 +40,6 @@
     function normalizeLimit(value, fallback) {
         const number = Number(value);
         return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : fallback;
-    }
-
-    function parseTimecodeSeconds(value) {
-        const text = compactText(value);
-        if (!TIMECODE_RE.test(text)) return NaN;
-
-        const parts = text.split(":").map(Number);
-        if (parts.some((part) => !Number.isFinite(part))) return NaN;
-        if (parts.length === 2) {
-            const [minutes, seconds] = parts;
-            return seconds < 60 ? minutes * 60 + seconds : NaN;
-        }
-        if (parts.length === 3) {
-            const [hours, minutes, seconds] = parts;
-            return minutes < 60 && seconds < 60 ? hours * 3600 + minutes * 60 + seconds : NaN;
-        }
-        return NaN;
     }
 
     function isCommentOrder(value) {
@@ -91,62 +77,6 @@
 
     function getReplyKey(parentKey, row, fallbackIndex = 0) {
         return `reply:${parentKey}:${getCommentKey(row, fallbackIndex)}`;
-    }
-
-    // 원본 VOD 댓글은 `comments` 키 없이 `commentActive`만 담은 성공 응답을 빈 목록으로 다뤄요.
-    // 키가 아예 없을 때만 빈 목록으로 보고, 키가 있는데 형식이 다르면 오류로 남겨요.
-    function isCommentListOmitted(content) {
-        return !Object.hasOwn(content, "comments") && typeof content.commentActive === "boolean";
-    }
-
-    function validateCommentResponse(content) {
-        if (!content || typeof content !== "object") throw new Error("댓글 응답 형식 확인 불가.");
-        if (isCommentListOmitted(content)) {
-            if (content.bestComments != null && !Array.isArray(content.bestComments)) {
-                throw new Error("인기 댓글 응답 형식 확인 불가.");
-            }
-            return content;
-        }
-        if (!content.comments || typeof content.comments !== "object" || !Array.isArray(content.comments.data)) {
-            throw new Error("댓글 목록 응답 형식 확인 불가.");
-        }
-        if (content.bestComments != null && !Array.isArray(content.bestComments)) {
-            throw new Error("인기 댓글 응답 형식 확인 불가.");
-        }
-        return content;
-    }
-
-    function parseCommentPage(content, { offset = 0, pageSize = COMMENT_PAGE_SIZE } = {}) {
-        validateCommentResponse(content);
-        const comments = isCommentListOmitted(content) ? { data: [] } : content.comments;
-        const rows = [...comments.data];
-        const normalizedOffset = normalizeLimit(offset, 0);
-        const bestRows = normalizedOffset === 0 && Array.isArray(content.bestComments) ? [...content.bestComments] : [];
-        const normalizedPageSize = Math.max(1, normalizeLimit(pageSize, COMMENT_PAGE_SIZE));
-        const totalCountValue = Number(comments.totalCount ?? comments.commentCount);
-        const totalCount = Number.isFinite(totalCountValue) && totalCountValue >= 0 ? totalCountValue : null;
-        const page = comments.page;
-        const next = Number(page?.next);
-        let hasMore;
-        let nextOffset;
-
-        if (page && Object.hasOwn(page, "next")) {
-            hasMore = Number.isFinite(next) && next > normalizedOffset;
-            nextOffset = hasMore ? next : normalizedOffset + rows.length;
-        } else {
-            nextOffset = normalizedOffset + rows.length;
-            hasMore = rows.length >= normalizedPageSize;
-        }
-        if (!rows.length) hasMore = false;
-
-        return {
-            bestRows,
-            commentActive: content.commentActive !== false,
-            hasMore,
-            nextOffset,
-            rows,
-            totalCount,
-        };
     }
 
     function normalizeReplyRow(reply) {
@@ -390,26 +320,42 @@
         return year === currentKstDate.getUTCFullYear() ? `${month}.${day}` : `${year}.${month}.${day}`;
     }
 
-    function normalizeImageUrl(value, baseUrl = DEFAULT_IMAGE_BASE_URL) {
-        const raw = compactText(value);
-        if (!raw) return "";
+    const normalizeImageUrl = root.utils.normalizeChzzkImageUrl;
+
+    function getPhotoThumbnailUrl(src) {
+        const normalized = normalizeImageUrl(src);
+        if (!normalized) return "";
+        const url = new URL(normalized);
+        if (url.origin === "https://nng-phinf.pstatic.net") url.search = "?type=w375";
+        return url.href;
+    }
+
+    function getPhotoDimensions(extraJson) {
+        if (!extraJson) return {};
         try {
-            const url = new URL(raw, compactText(baseUrl) || DEFAULT_IMAGE_BASE_URL);
-            return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
-        } catch (_) {
-            return "";
+            const { width, height } =
+                typeof extraJson === "string" ? JSON.parse(extraJson.trim().replace(/,+$/, "")) : extraJson;
+            if (Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0) {
+                return { width, height };
+            }
+        } catch {
+            // Older photos may omit or carry malformed dimensions. Keep their validated URL.
         }
+        return {};
     }
 
     function normalizeAttachments(comment, { baseUrl = DEFAULT_IMAGE_BASE_URL, maxItems = 5 } = {}) {
         const limit = normalizeLimit(maxItems, 5);
-        return (Array.isArray(comment?.attaches) ? comment.attaches : [])
-            .map((attachment) => ({
-                src: normalizeImageUrl(attachment?.attachValue, baseUrl),
-                type: compactText(attachment?.attachType).toUpperCase(),
-            }))
-            .filter((attachment) => attachment.src && IMAGE_ATTACHMENT_TYPES.includes(attachment.type))
-            .slice(0, limit);
+        const items = [];
+        for (const attachment of Array.isArray(comment?.attaches) ? comment.attaches : []) {
+            if (items.length >= limit) break;
+            const type = compactText(attachment?.attachType).toUpperCase();
+            if (!IMAGE_ATTACHMENT_TYPES.includes(type)) continue;
+            const src = normalizeImageUrl(attachment?.attachValue, baseUrl);
+            if (!src) continue;
+            items.push(type === "PHOTO" ? { src, type, ...getPhotoDimensions(attachment.extraJson) } : { src, type });
+        }
+        return items;
     }
 
     function isSurrogatePairBoundary(text, index) {
@@ -419,46 +365,80 @@
         return high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff;
     }
 
-    function getCollapsedCommentText(
-        text,
-        { maxChars = COLLAPSED_COMMENT_MAX_CHARS, maxLines = COLLAPSED_COMMENT_MAX_LINES } = {}
-    ) {
+    function getCollapsedCommentText(text, { maxChars = COLLAPSED_COMMENT_MAX_CHARS } = {}) {
         const content = String(text || "");
         const charLimit = normalizeLimit(maxChars, COLLAPSED_COMMENT_MAX_CHARS);
-        const lineLimit = Math.max(1, normalizeLimit(maxLines, COLLAPSED_COMMENT_MAX_LINES));
-        const lines = content.split("\n");
-        let cutoff = content.length;
-        if (lines.length > lineLimit) cutoff = lines.slice(0, lineLimit).join("\n").length;
-        cutoff = Math.min(cutoff, charLimit);
-        if (cutoff >= content.length) return "";
-        const cutAtCharLimit = cutoff === charLimit;
-        // UTF-16 서로게이트 쌍(이모지 등) 가운데에서 자르면 깨진 문자가 남으므로 쌍 앞에서 잘라요.
-        if (isSurrogatePairBoundary(content, cutoff)) cutoff -= 1;
+        if (content.length <= charLimit) return "";
+        const cutoff = isSurrogatePairBoundary(content, charLimit) ? charLimit - 1 : charLimit;
+        return content.slice(0, cutoff) + "...";
+    }
 
-        let collapsed = content.slice(0, cutoff).trimEnd();
-        if (cutAtCharLimit) {
-            const lastBreak = collapsed.lastIndexOf("\n");
-            if (lastBreak >= charLimit * 0.65) collapsed = collapsed.slice(0, lastBreak).trimEnd();
+    function parseCommentChapters(text) {
+        const chapters = new Map();
+        for (const line of text.split(/\r?\n/)) {
+            const matches = [...line.matchAll(CHAPTER_TIMECODE)];
+            for (const [index, match] of matches.entries()) {
+                const [, timecode] = match;
+                const seconds = root.utils.parseTimecodeSeconds(timecode);
+                if (!Number.isFinite(seconds)) continue;
+                const next = matches[index + 1];
+                const endOfTime = match.index + match[0].length;
+                const description = line.slice(endOfTime, next?.index);
+                const beforeTime = matches.length === 1 ? line.slice(0, match.index) : "";
+                const title =
+                    compactText(description.replace(CHAPTER_TITLE_SEPARATOR, "")) ||
+                    compactText(beforeTime.replace(CHAPTER_TITLE_SEPARATOR, ""));
+                const previous = chapters.get(seconds);
+                if (!previous || (!previous.title && title)) {
+                    chapters.set(seconds, { seconds, timecode, title });
+                }
+            }
         }
-        return collapsed ? `${collapsed}…` : "";
+        return [...chapters.values()].sort((a, b) => a.seconds - b.seconds).slice(0, MAX_COMMENT_CHAPTERS);
+    }
+
+    function selectAutomaticChapterComment(items, duration) {
+        let selected = null;
+        let highestBuffCount = -1;
+        for (const item of items) {
+            const row = item?.row;
+            const comment = row?.comment;
+            if (
+                typeof comment?.content !== "string" ||
+                comment.deleted ||
+                comment.hideByCleanBot ||
+                comment.secret ||
+                (comment.commentType && comment.commentType !== "COMMENT")
+            )
+                continue;
+            const id = comment.commentId;
+            if ((typeof id !== "string" && typeof id !== "number") || !/^[1-9]\d*$/.test(String(id))) continue;
+            const buffCount = Number(row.buffNerf?.buffCount ?? 0);
+            if (!Number.isSafeInteger(buffCount) || buffCount <= highestBuffCount) continue;
+            const chapters = parseCommentChapters(comment.content);
+            if (chapters.filter(({ seconds }) => seconds < duration).length < MIN_AUTOMATIC_CHAPTERS) continue;
+            highestBuffCount = buffCount;
+            selected = { commentId: String(id), chapters };
+        }
+        return selected;
     }
 
     namespace.model = Object.freeze({
         COLLAPSED_COMMENT_MAX_CHARS,
-        COLLAPSED_COMMENT_MAX_LINES,
         COMMENT_PAGE_SIZE,
         DEFAULT_ORDER,
         MAX_COMMENTS_PER_ORDER,
         MAX_REPLIES_PER_COMMENT,
         MAX_REPLIES_PER_ORDER,
+        MIN_AUTOMATIC_CHAPTERS,
         SORT_OPTIONS,
-        TIMECODE_SCAN_RE,
         applyCommentPage,
         collectReplyRows,
         compactText,
         formatCommentDate,
         getCollapsedCommentText,
         getCommentKey,
+        getPhotoThumbnailUrl,
         getReplyKey,
         isCommentOrder,
         mergeCommentItems,
@@ -466,9 +446,11 @@
         normalizeCommentRowReplies,
         normalizeImageUrl,
         normalizeReplyRow,
+        parseCommentChapters,
         parseCommentDate,
         parseCommentPage,
-        parseTimecodeSeconds,
+        parseTimecodeSeconds: root.utils.parseTimecodeSeconds,
+        selectAutomaticChapterComment,
         validateCommentResponse,
     });
 })();

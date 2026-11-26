@@ -167,6 +167,7 @@ function createCategoryExclusionsStorage(initial = {}) {
 }
 
 function loadCategoryExclusions(context = vm.createContext({ URL })) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, "shared/settings.js"), "utf8"), context);
     const file = "shared/categoryExclusions.js";
     vm.runInContext(fs.readFileSync(path.join(ROOT, file), "utf8"), context, { filename: file });
     return context.CheeseSpanner.categoryExclusions;

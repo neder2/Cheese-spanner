@@ -20,6 +20,7 @@ test("live route parsing rejects malformed URI escapes without throwing", () => 
     const { getLiveChannelIdFromPath } = dom.window.CheeseSpanner.utils;
     assert.equal(getLiveChannelIdFromPath("/live/%E0%A4%A"), "");
     assert.equal(getLiveChannelIdFromPath("/live/%"), "");
+    assert.equal(getLiveChannelIdFromPath("/live/%2F"), "");
     assert.equal(getLiveChannelIdFromPath("/live/%ED%85%8C%EC%8A%A4%ED%8A%B8"), "테스트");
     dom.window.close();
 });

@@ -1416,13 +1416,14 @@ function applySearch(query) {
         searchOpenSnapshot = new Set(optionGroups.filter((group) => group.open));
     }
 
-    const directMatches = searchUnits.filter(
-        (unit) =>
-            unit.headingText.includes(normalized) ||
-            unit.groupText.includes(normalized) ||
-            unit.subheadingText.includes(normalized) ||
-            unit.text.includes(normalized)
-    );
+    const words = query.toLowerCase().trim().split(/\s+/);
+    const directMatches = searchUnits.filter((unit) => {
+        const fields = [unit.headingText, unit.groupText, unit.subheadingText, unit.text];
+        return (
+            fields.some((field) => field.includes(normalized)) ||
+            words.every((word) => fields.some((field) => field.includes(word)))
+        );
+    });
     const visibleUnits = includeSearchContext(directMatches);
     const matchedGroups = new Set();
     const matchedSections = new Set();

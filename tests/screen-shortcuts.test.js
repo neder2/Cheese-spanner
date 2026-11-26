@@ -15,8 +15,11 @@ function fixture(t) {
     let apply;
     let clicks = 0;
     let native = 0;
+    w.eval(fs.readFileSync(path.join(__dirname, "../content.js"), "utf8"));
     w.CheeseSpanner = {
         utils: {
+            PLAYER_SHORTCUT_PANEL_SELECTOR: w.CheeseSpanner.utils.PLAYER_SHORTCUT_PANEL_SELECTOR,
+            isSpaceConsumerTarget: w.CheeseSpanner.utils.isSpaceConsumerTarget,
             bindFeatureOptions(fn) {
                 apply = fn;
                 fn({});
@@ -96,6 +99,28 @@ test("Space and M use their native buttons once and Space yields to hold-speed",
     f.apply({ screenShortcutsEnabled: true, holdSpeedEnabled: false });
     f.press("Space");
     assert.equal(f.counts().clicks, 4);
+});
+
+test("Space on a focused player control keeps its native action while an unfocused player receives playback Space", (t) => {
+    const f = fixture(t);
+    const doc = f.w.document;
+    const play = doc.createElement("button");
+    play.className = "pzp-pc__playback-switch";
+    doc.querySelector("main").append(play);
+    f.apply({ screenShortcutsEnabled: true, holdSpeedEnabled: false });
+    const fullscreen = doc.querySelector(".pzp-pc__fullscreen-button");
+    fullscreen.focus();
+    assert.equal(f.press("Space", { key: " " }, doc.activeElement).defaultPrevented, false);
+    const menuItem = doc.createElement("div");
+    menuItem.setAttribute("role", "menuitemradio");
+    menuItem.tabIndex = 0;
+    doc.querySelector("main").append(menuItem);
+    menuItem.focus();
+    assert.equal(f.press("Space", { key: " " }, doc.activeElement).defaultPrevented, false);
+    assert.equal(f.counts().clicks, 0);
+    menuItem.blur();
+    assert.equal(f.press("Space", { key: " " }).defaultPrevented, true);
+    assert.equal(f.counts().clicks, 1);
 });
 
 test("screen shortcuts resolve current player after SPA navigation and DOM remount", (t) => {

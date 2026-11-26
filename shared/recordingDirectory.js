@@ -39,18 +39,39 @@
     const set = (handle) =>
         access("readwrite", (store) => (handle ? store.put(handle, "selected") : store.delete("selected")));
 
+    // The page builds the name; the worker only accepts a plain file name with the two recorder containers.
+    const FILE_NAME =
+        // eslint-disable-next-line no-control-regex -- control characters are exactly what a file name must not hold.
+        /^[^\\/:*?"<>|\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]{1,150}\.(?:mp4|webm)$/;
+
+    function isRecordingFileName(value) {
+        return (
+            typeof value === "string" &&
+            FILE_NAME.test(value) &&
+            !/^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]) *(?:\.|$)/i.test(value) &&
+            !value.startsWith(".") &&
+            !value.startsWith(" ") &&
+            value.trim() === value
+        );
+    }
+
     let creationQueue = Promise.resolve();
 
     function openFile(directory, fileName) {
+        const locks = globalThis.navigator?.locks;
+        if (locks?.request) {
+            // Serialize file allocation across extension contexts on the same origin.
+            return locks.request("cheese-spanner:recording-file-allocation", () => createFile(directory, fileName));
+        }
         const operation = creationQueue.then(() => createFile(directory, fileName));
         creationQueue = operation.catch(() => {});
         return operation;
     }
 
     async function createFile(directory, fileName) {
+        if (!isRecordingFileName(fileName)) throw new Error("invalid-file-name");
         if ((await directory.queryPermission({ mode: "readwrite" })) !== "granted")
             throw new Error("directory-permission");
-        // The worker serializes allocation so simultaneous starts cannot reuse the same file name.
         const dot = fileName.lastIndexOf(".");
         for (let attempt = 0; attempt < 1000; attempt++) {
             const name = attempt === 0 ? fileName : `${fileName.slice(0, dot)} (${attempt})${fileName.slice(dot)}`;
@@ -61,10 +82,25 @@
                 if (error.name !== "NotFoundError") throw error;
             }
             const file = await directory.getFileHandle(name, { create: true });
-            return { writer: await file.createWritable({ mode: "exclusive" }), fileName: name };
+            let writer;
+            try {
+                writer = await file.createWritable({ mode: "exclusive" });
+            } catch (error) {
+                if (error.name === "NoModificationAllowedError") continue;
+                throw error;
+            }
+            // Other applications can also write to the selected folder.
+            // An intervening writer may already have committed between our missing-file check and this lock.
+            try {
+                if ((await file.getFile()).size === 0) return { writer, fileName: name };
+            } catch (error) {
+                await writer.abort();
+                throw error;
+            }
+            await writer.abort();
         }
         throw new Error("directory-file-exists");
     }
 
-    globalThis.CheeseSpannerRecordingDirectory = Object.freeze({ get, set, openFile });
+    globalThis.CheeseSpannerRecordingDirectory = Object.freeze({ get, set, openFile, isRecordingFileName });
 })();

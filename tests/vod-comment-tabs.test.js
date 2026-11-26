@@ -3,9 +3,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
+const { createFakeChrome, dispatchTrusted } = require("./helpers/extension-page-fixture.js");
 const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
 
 const ROOT = path.resolve(__dirname, "..");
+const AUTO_DISMISSAL_KEY = "cheese-spanner:vod-comment-auto-chapters-dismissed:12345";
 
 function evalRepoScript(dom, ...parts) {
     dom.window.eval(fs.readFileSync(path.join(ROOT, ...parts), "utf8"));
@@ -34,8 +36,7 @@ function assertSharedThemePalette(css) {
         "no theme-specific palette blocks"
     );
     assert.doesNotMatch(css, /color-scheme:\s*light/, "the panel inherits CHZZK's root color-scheme");
-    // Allowed fixed values: default profile images and the native-mimic BEST badge.
-    const withoutAllowed = css.replace(/url\("[^"]*"\)/g, "").replace(/background:#41bd53;color:#fff;/, "");
+    const withoutAllowed = css.replace(/url\("[^"]*"\)/g, "");
     assert.doesNotMatch(withoutAllowed, /#[0-9a-f]{3,8}\b|rgba?\(/i, "no static color fallback");
 }
 
@@ -110,11 +111,13 @@ function chatAsideHtml({ includeLog = true } = {}) {
 }
 
 function createFixture({
+    chrome,
     fetchComments,
     includeAside = true,
     includeLog = true,
     initialOptions = {},
     nativeCommentsHtml = null,
+    videoNo = "12345",
     trackLifecycle = false,
     withIdleCallback = true,
     withIntersectionObserver = false,
@@ -139,14 +142,15 @@ function createFixture({
               "</div></section>",
           ];
     const dom = new JSDOM(["<!doctype html><html><head></head><body>", ...pageHtml, "</body></html>"].join(""), {
-        url: "https://chzzk.naver.com/video/12345",
+        url: `https://chzzk.naver.com/video/${videoNo}`,
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });
     const { window } = dom;
     const { document } = window;
+    if (chrome) window.chrome = chrome;
     document.body.style.fontFamily = "system-ui, sans-serif";
-    const options = { vodCommentTabsEnabled: true, ...initialOptions };
+    const options = { vodCommentTabsEnabled: true, vodCommentAutoChaptersEnabled: true, ...initialOptions };
     const optionListeners = [];
     const routeListeners = [];
     const requests = [];
@@ -244,8 +248,11 @@ function createFixture({
     window.CheeseSpannerSettings = {
         normalizeOptions: () => ({ ...options }),
     };
+    evalRepoScript(dom, "shared", "data.js");
+    evalRepoScript(dom, "content.js");
     window.CheeseSpanner = {
         utils: {
+            ...window.CheeseSpanner.utils,
             bindFeatureOptions(callback) {
                 optionListeners.push(callback);
                 callback({ ...options });
@@ -280,6 +287,7 @@ function createFixture({
     evalRepoScript(dom, "features", "vodComments", "repository.js");
     evalRepoScript(dom, "features", "vodComments", "nativeAdapter.js");
     evalRepoScript(dom, "features", "vodComments", "view.js");
+    evalRepoScript(dom, "features", "vodComments", "chapters.js");
     if (trackLifecycle) {
         const nativeAdapterModule = window.CheeseSpanner.vodComments.nativeAdapter;
         const viewModule = window.CheeseSpanner.vodComments.view;
@@ -353,6 +361,434 @@ function delay(ms = 0) {
 function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 10 } = {}) {
     return waitForSharedCondition(predicate, { timeoutMs, intervalMs });
 }
+
+function createChapterFixture(t, rows, { chrome, fetchComments, folded = false, initialOptions = {}, videoNo } = {}) {
+    const nativeRow = ([id, text]) => `<div id="commentBox-${id}">
+        <div class="_header_19chc_66"><div class="_more_19chc_53"><button type="button">더보기</button>
+        <ul class="_layer_19chc_155"><li><button type="button" class="_option_19chc_166">신고</button></li></ul>
+        </div></div><div class="_content_19chc_40"><div class="_text_19chc_193">${text}</div></div>
+    </div>`;
+    const fixture = createFixture({
+        chrome,
+        fetchComments,
+        includeAside: false,
+        initialOptions: { ...initialOptions, ...(folded ? { vodCommentTabsEnabled: false } : {}) },
+        nativeCommentsHtml: `<div id="commentArea">${rows.map(nativeRow).join("")}</div>`,
+        videoNo,
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    const { document, video } = fixture;
+    const layout = document.getElementById("player_layout");
+    const player = document.createElement("div");
+    player.className = "pzp-pc pzp-pc--controls pzp-pc--seekable";
+    player.innerHTML = `<div class="pzp-pc__bottom">
+        <div class="pzp-pc__progress-slider" role="slider" tabindex="0"><div class="pzp-ui-slider__wrap"></div></div>
+    </div>`;
+    player.prepend(video);
+    layout.append(player);
+    if (folded) {
+        player.insertAdjacentHTML(
+            "afterbegin",
+            '<div class="header_info"><button class="_folded_button_fixture_18">채팅 다시보기 열기</button></div>'
+        );
+        fixture.emitOptions({ vodCommentTabsEnabled: true });
+    }
+    const menuAction = (id) => document.querySelector(`#commentBox-${id} [data-bcvc-chapter-action]`);
+    const controls = () => player.querySelector("[data-bcvc-chapter-controls]");
+    const segments = () => [...controls().querySelectorAll(".bcvc-chapter-segment")];
+    return { ...fixture, controls, menuAction, player, segments };
+}
+
+test("a folded replay chat applies automatic chapters when the video becomes visible", async (t) => {
+    const preview = '긴 댓글... <button type="button" class="_button_more_19chc_53">더보기</button>';
+    const full = "0:00 시작\n0:20 추천 댓글\n0:40 마지막 장면";
+    const fixture = createChapterFixture(
+        t,
+        [
+            [1, "추천이 많은 일반 댓글"],
+            [2, "0:05 다른 댓글\n0:10 중간\n0:15 끝"],
+            [3, preview],
+        ],
+        {
+            folded: true,
+            initialOptions: { vodCommentAutoChaptersEnabled: false },
+            fetchComments: async () =>
+                apiContent({
+                    best: [apiComment(1, "추천이 많은 일반 댓글", { buffCount: 120 })],
+                    rows: [
+                        apiComment(2, "0:05 다른 댓글\n0:10 중간\n0:15 끝", { buffCount: 5 }),
+                        apiComment(3, full, { buffCount: 30 }),
+                    ],
+                }),
+        }
+    );
+    const { controls, document, mediaState, menuAction, requests, segments, window } = fixture;
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel"), null);
+    assert.equal(
+        fixture.runIdleCallbacks(),
+        0,
+        "a folded panel has no automatic-only prefetch while the switch is off"
+    );
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    assert.equal(fixture.runIdleCallbacks(), 0);
+    assert.equal(requests.length, 0);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    assert.equal(fixture.runIdleCallbacks(), 1);
+    await waitForCondition(controls);
+    assert.deepEqual(
+        segments().map((button) => button.getAttribute("aria-label")),
+        ["0:00 시작", "0:20 추천 댓글", "0:40 마지막 장면"]
+    );
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].orderType, "POPULAR");
+    assert.equal(mediaState.currentTime, 100);
+    assert.ok(document.querySelector("#commentBox-3 ._text_19chc_193 button"), "the native comment stays collapsed");
+    assert.equal(menuAction(3).textContent, "챕터 해제");
+    menuAction(3).click();
+    assert.equal(controls(), null);
+});
+
+test("the automatic chapter switch hides only automatic chapters and honors a saved opt-out", async (t) => {
+    const full = "0:00 시작\n0:20 자동 추천\n0:40 마지막 장면";
+    const fixture = createChapterFixture(t, [[1, "0:15 직접 선택"]], {
+        initialOptions: { vodCommentAutoChaptersEnabled: false },
+        fetchComments: () => apiContent({ best: [apiComment(1, full, { buffCount: 30 })] }),
+    });
+    const { controls, document, menuAction, requests, segments } = fixture;
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='1']"));
+    assert.equal(controls(), null);
+    assert.equal(menuAction(1).textContent, "챕터 추가");
+
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    await waitForCondition(controls);
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:20 자동 추천");
+    assert.equal(requests.length, 1, "turning on the feature uses the cached first response");
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: false });
+    assert.equal(controls(), null);
+    assert.equal(menuAction(1).textContent, "챕터 추가");
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:20 자동 추천");
+
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: false });
+    menuAction(1).click();
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:15 직접 선택");
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: false });
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:15 직접 선택");
+    menuAction(1).click();
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    assert.equal(controls(), null);
+});
+
+test("dismissing automatic chapters remembers just that video in a fresh document", async (t) => {
+    const chrome = createFakeChrome({ local: { existing: true } });
+    const full = "0:00 시작\n0:20 자동 추천\n0:40 마지막 장면";
+    const fetchComments = () => apiContent({ best: [apiComment(1, full, { buffCount: 30 })] });
+    const first = createChapterFixture(t, [[1, full]], { chrome, fetchComments });
+    await waitForCondition(first.controls);
+    dispatchTrusted(first.menuAction(1), new first.window.MouseEvent("click", { bubbles: true }));
+    assert.equal(first.controls(), null);
+    await waitForCondition(() => chrome.testState.local[AUTO_DISMISSAL_KEY] === true);
+    assert.deepEqual(chrome.testState.local, { existing: true, [AUTO_DISMISSAL_KEY]: true });
+
+    const getLocal = chrome.storage.local.get.bind(chrome.storage.local);
+    let finishStoredRead;
+    chrome.storage.local.get = (key, callback) => {
+        finishStoredRead = () => getLocal(key, callback);
+    };
+    const reloaded = createChapterFixture(t, [[1, full]], { chrome, fetchComments });
+    await waitForCondition(() => reloaded.document.querySelector(".bcvc-comment[data-bcvc-comment-id='1']"));
+    assert.equal(reloaded.controls(), null, "automatic chapters wait for the saved preference");
+    finishStoredRead();
+    chrome.storage.local.get = getLocal;
+    await delay();
+    assert.equal(reloaded.controls(), null);
+    assert.equal(reloaded.menuAction(1).textContent, "챕터 추가");
+    reloaded.menuAction(1).click();
+    assert.ok(reloaded.controls(), "the saved preference still allows a manual selection");
+
+    const next = createChapterFixture(t, [[1, full]], { chrome, fetchComments, videoNo: "54321" });
+    await waitForCondition(next.controls);
+    assert.equal(next.menuAction(1).textContent, "챕터 해제");
+});
+
+test("synthetic clicks, manual clears, and incognito dismissals do not write a video preference", async (t) => {
+    const chrome = createFakeChrome();
+    const full = "0:00 시작\n0:20 자동 추천\n0:40 마지막 장면";
+    const fetchComments = () => apiContent({ best: [apiComment(1, full, { buffCount: 30 })] });
+    const regular = createChapterFixture(t, [[1, full]], { chrome, fetchComments });
+    await waitForCondition(regular.controls);
+    regular.menuAction(1).click();
+    assert.equal(regular.controls(), null);
+    assert.equal(chrome.testState.local[AUTO_DISMISSAL_KEY], undefined);
+    regular.menuAction(1).click();
+    dispatchTrusted(regular.menuAction(1), new regular.window.MouseEvent("click", { bubbles: true }));
+    assert.equal(regular.controls(), null);
+    assert.equal(chrome.testState.local[AUTO_DISMISSAL_KEY], undefined);
+
+    const incognitoChrome = createFakeChrome({ local: { [AUTO_DISMISSAL_KEY]: true } });
+    incognitoChrome.extension = { inIncognitoContext: true };
+    incognitoChrome.storage.local.set = () => assert.fail("incognito must not write a dismissal");
+    const incognito = createChapterFixture(t, [[1, full]], { chrome: incognitoChrome, fetchComments });
+    await waitForCondition(incognito.controls);
+    dispatchTrusted(incognito.menuAction(1), new incognito.window.MouseEvent("click", { bubbles: true }));
+    assert.equal(incognito.controls(), null);
+});
+
+test("a failed dismissal write keeps the current chapters cleared and exposes the storage error", async (t) => {
+    const chrome = createFakeChrome();
+    chrome.storage.local.set = (_, callback) => {
+        chrome.runtime.lastError = { message: "Quota exceeded" };
+        callback();
+        delete chrome.runtime.lastError;
+    };
+    const full = "0:00 시작\n0:20 자동 추천\n0:40 마지막 장면";
+    const fixture = createChapterFixture(t, [[1, full]], {
+        chrome,
+        fetchComments: () => apiContent({ best: [apiComment(1, full, { buffCount: 30 })] }),
+    });
+    await waitForCondition(fixture.controls);
+    dispatchTrusted(fixture.menuAction(1), new fixture.window.MouseEvent("click", { bubbles: true }));
+    await waitForCondition(() => fixture.document.querySelector(".bcvc-chapter-storage-error"));
+    assert.equal(fixture.controls(), null);
+    assert.equal(chrome.testState.local[AUTO_DISMISSAL_KEY], undefined);
+});
+
+test("a manual choice and clear take precedence over delayed and refreshed automatic candidates", async (t) => {
+    const first = deferred();
+    const full = "0:00 시작\n0:20 추천 댓글\n0:40 마지막 장면";
+    const fixture = createChapterFixture(
+        t,
+        [
+            [1, "0:35 직접 추가"],
+            [2, full],
+        ],
+        {
+            fetchComments: (_, index) =>
+                index === 0 ? first.promise : apiContent({ best: [apiComment(3, full, { buffCount: 70 })] }),
+        }
+    );
+    const { controls, document, menuAction, requests, segments } = fixture;
+    menuAction(1).click();
+    await waitForCondition(controls);
+    first.resolve(apiContent({ best: [apiComment(2, full, { buffCount: 60 })] }));
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='2']"));
+    assert.equal(segments().at(-1).getAttribute("aria-label"), "0:35 직접 추가");
+    menuAction(1).click();
+    assert.equal(controls(), null);
+    document.querySelector("[data-bcvc-action='refresh']").click();
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='3']"));
+    assert.equal(requests.length, 2);
+    assert.equal(controls(), null);
+});
+
+test("automatic chapters defer to official chapters and wait for the next video's own media", async (t) => {
+    const full = "0:00 시작\n0:20 추천 댓글\n0:40 마지막 장면";
+    const fixture = createChapterFixture(t, [[1, full]], {
+        fetchComments: ({ objectId }) =>
+            apiContent({
+                best: [apiComment(objectId === "12345" ? 1 : 2, full, { buffCount: 20 })],
+            }),
+    });
+    const { controls, document, player, video, segments } = fixture;
+    player.classList.add("pzp-pc--chapter");
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='1']"));
+    assert.equal(controls(), null);
+    fixture.emitRoute("/video/54321");
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='2']"));
+    player.classList.remove("pzp-pc--chapter");
+    await delay();
+    assert.equal(controls(), null);
+    const nextMedia = document.createElement("video");
+    Object.defineProperty(nextMedia, "duration", { value: 60 });
+    video.replaceWith(nextMedia);
+    await waitForCondition(controls);
+    assert.equal(segments().at(-1).getAttribute("aria-label"), "0:40 마지막 장면");
+});
+
+test("native comment menus select, replace and clear VOD chapters without changing the native seek control", async (t) => {
+    const fixture = createChapterFixture(t, [
+        [1, "0:03 첫 장면\n1:24:30 보스전\n2:00:00 영상 끝"],
+        [2, "0:20 다른 댓글"],
+        [3, "일반 댓글"],
+    ]);
+    const { controls, document, mediaState, menuAction, player, segments, window } = fixture;
+    let slider = player.querySelector("[role='slider']");
+    await waitForCondition(() => menuAction(1)?.textContent === "챕터 추가");
+
+    assert.equal(menuAction(1).parentElement.previousElementSibling.textContent, "신고");
+    assert.equal(menuAction(3), null);
+    menuAction(1).click();
+    assert.equal(menuAction(1).textContent, "챕터 해제");
+    assert.equal(slider.nextElementSibling, controls());
+    assert.deepEqual(
+        segments().map((button) => button.getAttribute("aria-label")),
+        ["0:00 영상 시작", "0:03 첫 장면", "1:24:30 보스전"]
+    );
+    assert.equal(segments()[2].querySelector(".bcvc-chapter-tooltip").textContent, "1:24:30 보스전");
+    assert.equal(mediaState.currentTime, 100, "adding chapters must preserve position");
+    mediaState.paused = true;
+    segments()[2].click();
+    assert.equal(mediaState.currentTime, 5070);
+    assert.equal(mediaState.paused, true);
+
+    const oldSlider = slider;
+    slider = slider.cloneNode(true);
+    slider.removeAttribute("data-bcvc-chapter-slider");
+    oldSlider.replaceWith(slider);
+    await waitForCondition(() => slider.nextElementSibling === controls());
+    assert.equal(oldSlider.hasAttribute("data-bcvc-chapter-slider"), false);
+    assert.equal(slider.getAttribute("role"), "slider");
+    menuAction(2).click();
+    assert.equal(menuAction(1).textContent, "챕터 추가");
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:20 다른 댓글");
+
+    player.classList.add("pzp-pc--chapter");
+    await waitForCondition(() => !controls() && menuAction(1)?.disabled);
+    assert.equal(slider.hasAttribute("data-bcvc-chapter-slider"), false);
+    assert.equal(menuAction(1).textContent, "공식 챕터 사용 중");
+    assert.equal(menuAction(2).textContent, "챕터 해제");
+    player.classList.remove("pzp-pc--chapter");
+    await waitForCondition(controls);
+    assert.equal(controls().querySelector(".bcvc-chapter-clear"), null);
+    const clear = menuAction(2);
+    clear.focus();
+    clear.click();
+    assert.equal(document.activeElement, clear);
+    assert.equal(clear.textContent, "챕터 추가");
+    assert.equal(controls(), null);
+
+    menuAction(1).click();
+    assert.ok(controls());
+    const previousMenuAction = menuAction(1);
+    fixture.emitRoute("/video/54321");
+    assert.equal(controls(), null);
+    previousMenuAction.click();
+    assert.equal(controls(), null, "an old video's still-open menu cannot select chapters in the new video");
+    assert.equal(menuAction(1), null);
+    const oldMenu = document.querySelector("#commentBox-1 ul");
+    oldMenu.replaceWith(oldMenu.cloneNode(true));
+    await waitForCondition(() => menuAction(1)?.textContent === "챕터 추가");
+    assert.equal(menuAction(1).textContent, "챕터 추가");
+    menuAction(1).click();
+    assert.ok(controls());
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.equal(menuAction(1), null);
+    assert.equal(controls(), null);
+    assert.equal(slider.hasAttribute("data-bcvc-chapter-slider"), false);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chapters-style"), null);
+    assert.equal(window.location.pathname, "/video/54321");
+});
+
+test("selecting a collapsed native comment waits for its full text and ignores a stale expansion after navigation", async (t) => {
+    const more = '<button type="button" class="_button_more_19chc_53">더보기</button>';
+    const fixture = createChapterFixture(t, [
+        [1, `0:03 첫 장면\n긴 댓글... ${more}`],
+        [2, `앞부분에 시각이 없는 긴 댓글... ${more}`],
+        [3, `타임스탬프 없는 댓글... ${more}`],
+    ]);
+    const { controls, document, mediaState, menuAction, segments } = fixture;
+    const body = (id) => document.querySelector(`#commentBox-${id} ._text_19chc_193`);
+    const onExpand = (id, callback) => body(id).querySelector("button").addEventListener("click", callback);
+
+    onExpand(1, () =>
+        queueMicrotask(() => {
+            body(1).textContent = "0:03 첫 장면\n1:24:30 숨겨진 보스전";
+        })
+    );
+    menuAction(1).click();
+    assert.equal(controls(), null, "the collapsed preview must never become the selected chapters");
+    await waitForCondition(controls);
+    assert.deepEqual(
+        segments().map((button) => button.getAttribute("aria-label")),
+        ["0:00 영상 시작", "0:03 첫 장면", "1:24:30 숨겨진 보스전"]
+    );
+    segments().at(-1).click();
+    assert.equal(mediaState.currentTime, 5070);
+    menuAction(1).click();
+    assert.equal(controls(), null);
+
+    onExpand(3, () => {
+        body(3).textContent = "타임스탬프 없는 댓글의 전체 본문";
+    });
+    menuAction(3).click();
+    assert.equal(controls(), null);
+    assert.equal(menuAction(3).textContent, "표시할 챕터 없음");
+
+    let revealSecond;
+    onExpand(2, () => {
+        revealSecond = () => {
+            body(2).textContent = "0:20 숨겨진 챕터";
+        };
+    });
+    assert.equal(menuAction(2).textContent, "챕터 추가");
+    menuAction(2).click();
+    assert.equal(typeof revealSecond, "function", "a comment with all timestamps below the fold can be selected");
+    fixture.emitRoute("/video/54321");
+    revealSecond();
+    await delay();
+    assert.equal(controls(), null);
+    assert.equal(menuAction(2), null);
+});
+
+test("chapter hover follows the native frame preview and only forwards hover events", async (t) => {
+    const { controls, document, mediaState, menuAction, player, segments, window } = createChapterFixture(t, [
+        [1, "0:03 첫 장면\n1:24:30 보스전"],
+    ]);
+    const slider = player.querySelector("[role='slider']");
+    const preview = document.createElement("div");
+    preview.className = "pzp-pc__seeking-preview";
+    preview.innerHTML =
+        '<div class="pzp-seeking-preview__description"><div class="pzp-seeking-preview__time"></div></div>';
+    player.prepend(preview);
+    const description = preview.firstElementChild;
+    const previewTitle = () => description.getAttribute("data-bcvc-chapter-preview-title");
+    const events = [];
+    for (const type of ["mouseover", "mousemove", "mouseleave", "mousedown", "click"]) {
+        slider.addEventListener(type, (event) => events.push([event.type, event.clientX, event.clientY]));
+    }
+    menuAction(1).click();
+    await waitForCondition(controls);
+    const [, first, second] = segments();
+    const move = (target, clientX, buttons = 0) => {
+        target.dispatchEvent(new window.MouseEvent("mousemove", { bubbles: true, clientX, clientY: 480, buttons }));
+    };
+    const leave = (relatedTarget = null) => {
+        controls().dispatchEvent(new window.MouseEvent("mouseleave", { relatedTarget }));
+    };
+
+    move(first, 130);
+    assert.equal(previewTitle(), "첫 장면");
+    move(second, 920);
+    assert.equal(previewTitle(), "보스전");
+    move(second, 925, 1);
+    assert.deepEqual(events, [
+        ["mouseover", 130, 480],
+        ["mousemove", 130, 480],
+        ["mousemove", 920, 480],
+    ]);
+    assert.equal(mediaState.currentTime, 100);
+
+    leave(slider);
+    assert.equal(previewTitle(), null);
+    assert.equal(events.length, 3, "crossing to native scrub space leaves the native preview available");
+    move(first, 145);
+    leave();
+    assert.equal(previewTitle(), null);
+    assert.equal(events.at(-1)[0], "mouseleave");
+
+    move(first, 145);
+    menuAction(1).click();
+    assert.equal(previewTitle(), null);
+    assert.equal(controls(), null);
+    assert.equal(events.at(-1)[0], "mouseleave");
+});
 
 function clickCommentTab(document) {
     document.getElementById("cheese-spanner-vod-comment-comment-tab").click();
@@ -518,6 +954,70 @@ test("VOD split supports nested native chat, remounts and fullscreen without mov
     assert.equal(chat.getAttribute("style"), originalStyle);
 });
 
+test("hiding a mounted chat log or its wrapper collapses the split and preserves its ratio on return", async (t) => {
+    const fixture = createFixture({
+        includeLog: false,
+        initialOptions: { vodCommentLayout: "split", vodCommentSplitTop: "comments" },
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    const { document, window } = fixture;
+    const native = document.querySelector(".native-chat-container");
+    native.insertAdjacentHTML("beforeend", '<div id="native-chat-wrapper"><div role="log">채팅</div></div>');
+    const wrapper = document.getElementById("native-chat-wrapper");
+    const chat = wrapper.querySelector('[role="log"]');
+    const splitter = () => document.getElementById("cheese-spanner-vod-comment-splitter");
+    const panel = () => document.getElementById("cheese-spanner-vod-comment-panel");
+    await waitForCondition(() => splitter() && !splitter().hidden);
+    splitter().dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    const ratio = splitter().getAttribute("aria-valuenow");
+    for (const node of [chat, wrapper]) {
+        node.style.display = "none";
+        await waitForCondition(() => splitter().hidden);
+        assert.equal(panel().hidden, false);
+        assert.equal(native.hasAttribute("data-bcvc-layout"), false);
+        node.style.removeProperty("display");
+        await waitForCondition(() => !splitter().hidden);
+        assert.equal(splitter().getAttribute("aria-valuenow"), ratio);
+        assert.equal(chat.parentElement, wrapper);
+        assert.equal(document.querySelector(".bcvc-split-title").textContent, "댓글 · 채팅");
+    }
+});
+
+test("split follows the current ancestors when the site moves the same chat log", async (t) => {
+    const f = createFixture({ initialOptions: { vodCommentLayout: "split" }, trackLifecycle: true });
+    t.after(() => {
+        f.emitOptions({ vodCommentTabsEnabled: false });
+        f.window.close();
+    });
+    const { document } = f;
+    const chat = document.querySelector('[role="log"]');
+    const splitter = document.getElementById("cheese-spanner-vod-comment-splitter");
+    await waitForCondition(() => splitter && !splitter.hidden);
+    splitter.dispatchEvent(new f.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    const ratio = splitter.getAttribute("aria-valuenow");
+    const parent = document.createElement("div");
+    chat.before(parent);
+    parent.append(chat);
+    await waitForCondition(() => parent.hasAttribute("data-bcvc-split-chat"));
+    parent.hidden = true;
+    await waitForCondition(() => splitter.hidden);
+    const refreshes = f.lifecycle.adapterRefresh;
+    const outer = document.createElement("div");
+    outer.style.display = "none";
+    parent.before(outer);
+    outer.append(parent);
+    parent.hidden = false;
+    await waitForCondition(() => f.lifecycle.adapterRefresh > refreshes);
+    assert.equal(splitter.hidden, true);
+    outer.style.removeProperty("display");
+    await waitForCondition(() => !splitter.hidden && outer.hasAttribute("data-bcvc-split-chat"));
+    assert.equal(splitter.getAttribute("aria-valuenow"), ratio);
+    assert.equal(chat.parentNode, parent);
+});
+
 test("VOD split keeps pagination active and falls back to a full comment pane when chat is unavailable", async (t) => {
     const fixture = createFixture({
         initialOptions: { vodCommentLayout: "split" },
@@ -576,7 +1076,7 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-size"), "17px");
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-weight"), "700");
     assert.equal(commentPanel.style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
-    assert.equal(commentPanel.style.getPropertyValue("--bcvc-toolbar-font-family"), "system-ui, sans-serif");
+    assert.equal(commentPanel.style.getPropertyValue("--bcvc-toolbar-font-family"), "");
     assert.equal(container.style.getPropertyValue("--bcvc-panel-height"), "496px");
     const commentStyle = document.getElementById("cheese-spanner-vod-comment-tabs-style");
     const css = commentStyle.textContent;
@@ -602,12 +1102,13 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     );
     assert.match(
         css,
-        /\.bcvc-sort-button\{font-family:var\(--bcvc-toolbar-font-family,var\(--bcvc-font-family,inherit\)\)\}/
+        /\.bcvc-sort-button\{[^}]*font-family:var\(--bcvc-toolbar-font-family,"Sandoll Nemony2",sans-serif\)/s
     );
     assert.doesNotMatch(css, /"Malgun Gothic"|"맑은 고딕"/);
     assert.match(css, /button\[aria-selected="true"\]\{\s*color:var\(--bcvc-text/);
-    assert.match(css, /container-type:inline-size/);
-    assert.match(css, /@container\s*\(max-width:300px\)/);
+    assert.match(css, /container-type:size/);
+    assert.match(css, /\.bcvc-toolbar\{[^}]*flex-wrap:wrap/s);
+    assert.match(css, /@container\s*\(max-height:110px\)\{\.bcvc-toolbar\{position:static\}\}/);
     assert.match(
         css,
         /#cheese-spanner-vod-comment-chat-tab,\s*#cheese-spanner-vod-comment-comment-tab\{[^}]*flex:0 0 auto[^}]*padding:0 2px/s
@@ -804,6 +1305,50 @@ test("VOD comments do not replace temporarily hidden native chat with the commen
     assert.equal(fixture.requests.length, 0, "restoring native chat must not fetch comments before the tab is opened");
 });
 
+test("the folded native replay chat button stays above player overlays and visible on focus before the aside mounts", async (t) => {
+    const fixture = createFixture({ includeAside: false, initialOptions: { vodCommentTabsEnabled: false } });
+    const { document, window } = fixture;
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        window.close();
+    });
+    const player = document.getElementById("player_layout");
+    player.className = "chzzk_player type_vod";
+    player.insertAdjacentHTML(
+        "beforeend",
+        '<div class="pzp-pc"><div class="player_header"><div class="header_info">' +
+            '<button type="button" class="_folded_button_fixture_18"><svg></svg></button></div></div></div>'
+    );
+    const nativeStyle = document.createElement("style");
+    nativeStyle.textContent = ".player_header{position:absolute;z-index:auto}.header_info{opacity:0}";
+    document.head.appendChild(nativeStyle);
+    const header = player.querySelector(".player_header");
+    const info = header.querySelector(".header_info");
+    const nativeButton = info.querySelector("button");
+    nativeButton.addEventListener("click", () => {
+        nativeButton.remove();
+        player.parentElement.insertAdjacentHTML("beforeend", chatAsideHtml());
+    });
+
+    nativeButton.focus();
+    assert.equal(window.getComputedStyle(info).opacity, "0");
+    fixture.emitOptions({ vodCommentTabsEnabled: true });
+    assert.ok(Number(window.getComputedStyle(header).zIndex) > 0);
+    assert.equal(window.getComputedStyle(info).opacity, "1");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-aside"), null);
+
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.equal(window.getComputedStyle(header).zIndex, "auto");
+    assert.equal(window.getComputedStyle(info).opacity, "0");
+    fixture.emitOptions({ vodCommentTabsEnabled: true, vodCommentLayout: "split" });
+    assert.equal(window.getComputedStyle(info).opacity, "1");
+    assert.deepEqual([...player.querySelectorAll("button")], [nativeButton]);
+
+    nativeButton.click();
+    await waitForCondition(() => document.querySelector("#vod-aside [data-bcvc-layout='split']"));
+    assert.equal(window.getComputedStyle(header).zIndex, "auto");
+});
+
 test("VOD comment tabs mount after a delayed chat log and reuse cached comments after an aside remount", async (t) => {
     const fixture = createFixture({
         fetchComments: async () => apiContent({ rows: [apiComment(1, "유지할 댓글")], totalCount: 1 }),
@@ -895,13 +1440,13 @@ test("VOD comments load from the API without a lower comment DOM and render safe
     const pending = deferred();
     const best = apiComment(1, "첫 골 19:10", {
         attaches: [
-            { attachType: "PHOTO", attachValue: "https://example.com/photo.jpg" },
+            { attachType: "PHOTO", attachValue: "https://nng-phinf.pstatic.net/photo.jpg?type=original#photo" },
             { attachType: "PHOTO", attachValue: "javascript:alert(1)" },
         ],
         buffCount: 2,
         createdDate: "20260101003000",
         nickname: "방송자",
-        profileImageUrl: "https://example.com/avatar.jpg",
+        profileImageUrl: "https://nng-phinf.pstatic.net/avatar.jpg",
         writer: true,
     });
     const fixture = createFixture({ fetchComments: () => pending.promise });
@@ -938,18 +1483,31 @@ test("VOD comments load from the API without a lower comment DOM and render safe
 
     assert.match(document.querySelector("[data-bcvc-count='1']").textContent, /댓글 2/);
     assert.equal(document.querySelectorAll(".bcvc-best").length, 1, "BEST and page duplicates must be merged");
-    assert.ok(
-        document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-message > .bcvc-best:first-child"),
-        "BEST badge must lead the message like the native Chzzk comment row"
+    const badge = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-message > svg.bcvc-best:first-child");
+    assert.ok(badge, "BEST badge must lead the message even without the native comment DOM");
+    assert.equal(badge.getAttribute("viewBox"), "0 0 39 18");
+    assert.equal(badge.getAttribute("aria-hidden"), "true");
+    const badgeStyle = fixture.dom.window.getComputedStyle(badge);
+    assert.deepEqual(
+        [badgeStyle.width, badgeStyle.height, badgeStyle.margin, badgeStyle.verticalAlign],
+        ["39px", "18px", "1px 6px 0px 0px", "top"]
     );
+    assert.equal(badge.querySelector("rect").getAttribute("fill"), "#41BD53");
+    assert.equal(badge.querySelector("path").getAttribute("fill"), "white");
+    assert.equal(badge.nextElementSibling.className, "bcvc-sr-only");
+    assert.equal(badge.nextElementSibling.textContent, "BEST");
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-meta .bcvc-best"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-date").textContent, "01.01");
     assert.match(document.querySelector("[data-bcvc-comment-key='id:1']").textContent, /방송자/);
     assert.ok(document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-writer"));
     assert.equal(document.querySelectorAll(".bcvc-attachment").length, 1, "unsafe attachment URLs must be dropped");
+    const photo = document.querySelector(".bcvc-attachment");
+    assert.equal(photo.src, "https://nng-phinf.pstatic.net/photo.jpg?type=w375");
+    const photoStyle = fixture.window.getComputedStyle(photo);
+    assert.deepEqual([photoStyle.width, photoStyle.maxWidth, photoStyle.maxHeight], ["215px", "100%", "440px"]);
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar > .bcvc-avatar-image")?.src,
-        "https://example.com/avatar.jpg",
+        "https://nng-phinf.pstatic.net/avatar.jpg",
         "profile images must use the same framed image structure as native Chzzk comments"
     );
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar").disabled, true);
@@ -1012,14 +1570,14 @@ test("VOD comments load from the API without a lower comment DOM and render safe
 });
 
 test("VOD comment rows reuse native Chzzk profile and buff visuals without cloning native controls", async (t) => {
-    const nativeProfileUrl = "https://example.com/native-avatar.jpg";
+    const nativeProfileUrl = "https://nng-phinf.pstatic.net/native-avatar.jpg";
     const fixture = createFixture({
         fetchComments: async () =>
             apiContent({
                 rows: [
                     apiComment(1, "원본 자산", {
                         buffCount: 3,
-                        profileImageUrl: "https://example.com/api-avatar.jpg",
+                        profileImageUrl: "https://nng-phinf.pstatic.net/api-avatar.jpg",
                     }),
                 ],
                 totalCount: 1,
@@ -1072,15 +1630,14 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     const nativeAvatar = document.querySelector("#native-avatar-1 > span");
     const mirroredAvatar = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar");
     const mirroredAuthor = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-author");
-    const reusedAvatar = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar-native-visual");
+    const reusedAvatar = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar-image");
     assert.equal(mirroredAvatar.tagName, "BUTTON");
     assert.equal(mirroredAvatar.disabled, false);
     assert.equal(mirroredAuthor.tagName, "BUTTON");
     assert.equal(mirroredAuthor.disabled, false);
-    assert.equal(
-        window.getComputedStyle(reusedAvatar).backgroundImage,
-        window.getComputedStyle(nativeAvatar).backgroundImage
-    );
+    assert.equal(reusedAvatar.src, nativeProfileUrl);
+    assert.equal(reusedAvatar.referrerPolicy, "no-referrer");
+    assert.equal(mirroredAvatar.hasAttribute("data-bcvc-api-avatar-url"), false);
     assert.notEqual(reusedAvatar, nativeAvatar);
     assert.equal(nativeAvatar.closest("#commentBox-1")?.id, "commentBox-1");
 
@@ -1099,10 +1656,10 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     nativeAvatarButton.removeAttribute("aria-disabled");
     await waitForCondition(() => !mirroredAvatar.disabled);
     nativeAvatar.style.backgroundImage = "none";
-    await waitForCondition(() => mirroredAvatar.querySelector(".bcvc-avatar-image"));
+    await waitForCondition(() => mirroredAvatar.querySelector(".bcvc-avatar-image")?.src.endsWith("/api-avatar.jpg"));
     assert.equal(
         mirroredAvatar.querySelector(".bcvc-avatar-image").src,
-        "https://example.com/api-avatar.jpg",
+        "https://nng-phinf.pstatic.net/api-avatar.jpg",
         "a removed native background must fall back to the API profile image instead of staying stale"
     );
 
@@ -1152,7 +1709,7 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     replacementArea.id = "commentArea";
     replacementArea.innerHTML = [
         '<div id="commentBox-1">',
-        '<button id="replacement-avatar-1" class="_thumbnail_fixture_76" type="button"><span style="background-image:url(\'https://example.com/replacement-avatar.jpg\')"></span></button>',
+        '<button id="replacement-avatar-1" class="_thumbnail_fixture_76" type="button"><span style="background-image:url(\'https://nng-phinf.pstatic.net/replacement-avatar.jpg\')"></span></button>',
         '<button id="replacement-author-1" class="_information_fixture_101" type="button"><strong>작성자 1</strong></button>',
         '<button id="replacement-buff-1" type="button" aria-pressed="false" aria-label="버프 5"><i class="_buff_icon_fixture_5"></i></button>',
         "</div>",
@@ -1171,10 +1728,7 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     mirroredBuff.click();
     assert.equal(replacementClicks, 3, "replacement native controls must receive the next delegated actions");
     await waitForCondition(() => mirroredBuff.getAttribute("aria-label") === "버프 5");
-    assert.match(
-        window.getComputedStyle(mirroredAvatar.querySelector(".bcvc-avatar-native-visual")).backgroundImage,
-        /replacement-avatar/
-    );
+    assert.match(mirroredAvatar.querySelector(".bcvc-avatar-image").src, /replacement-avatar/);
     assert.equal(fixture.requests.length, 1, "native control remounts must not reload API comments");
 });
 
@@ -1296,7 +1850,7 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     assert.equal(reply.querySelector(".bcvc-message")?.textContent.trim(), "작성자 1답글 00:30");
     const injectedStyle = document.getElementById("cheese-spanner-vod-comment-tabs-style").textContent;
     assert.match(injectedStyle, /\.bcvc-replies\{[^}]*margin:4px 0 0 12px[^}]*\}/s);
-    assert.match(injectedStyle, /\.bcvc-replies \.bcvc-comment\{[^}]*padding:9px 0 5px 30px[^}]*\}/s);
+    assert.match(injectedStyle, /\.bcvc-replies \.bcvc-comment\{[^}]*padding-block:9px 5px;padding-inline-start:30px/s);
     assert.match(injectedStyle, /\.bcvc-replies \.bcvc-avatar\{[^}]*width:22px[^}]*height:22px[^}]*\}/s);
     const directReplyRow = document.querySelector("[data-bcvc-comment-id='7']");
     assert.match(directReplyRow.textContent, /직접 답글 00:45/);
@@ -1328,11 +1882,9 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     assert.equal(replyList.hidden, true);
 });
 
-test("VOD long comments start collapsed and can be expanded and collapsed in place", async (t) => {
-    const longText = Array.from(
-        { length: 30 },
-        (_, index) => `${String(index + 1).padStart(2, "0")}:00 긴 댓글 줄`
-    ).join("\n");
+test("VOD long comments expand inline once, preserving focus and linking only complete timecodes", async (t) => {
+    const prefix = "01:00 첫 장면\n".padEnd(244, "가") + " ";
+    const longText = prefix + "01:02:03 다음 장면\n30:00 마지막 장면";
     const fixture = createFixture({
         fetchComments: async () => apiContent({ rows: [apiComment(1, longText)], totalCount: 1 }),
     });
@@ -1349,18 +1901,20 @@ test("VOD long comments start collapsed and can be expanded and collapsed in pla
 
     assert.equal(toggle.textContent, "더보기");
     assert.equal(toggle.getAttribute("aria-expanded"), "false");
-    assert.ok(content.textContent.length < longText.length);
-    assert.doesNotMatch(content.textContent, /30:00/);
+    assert.equal(content.nextElementSibling, toggle);
+    assert.equal(content.parentElement.className, "bcvc-message");
+    assert.equal(content.textContent, prefix + "01:02...");
+    const times = () => Array.from(content.querySelectorAll(".bcvc-timecode"), (button) => button.textContent);
+    assert.deepEqual(times(), ["01:00"]);
 
+    toggle.focus();
     toggle.click();
-    assert.equal(toggle.textContent, "접기");
-    assert.equal(toggle.getAttribute("aria-expanded"), "true");
-    assert.match(content.textContent, /30:00/);
-
-    toggle.click();
-    assert.equal(toggle.textContent, "더보기");
-    assert.equal(toggle.getAttribute("aria-expanded"), "false");
-    assert.doesNotMatch(content.textContent, /30:00/);
+    assert.equal(document.activeElement, content);
+    assert.equal(content.tabIndex, -1);
+    assert.equal(toggle.isConnected, false);
+    assert.equal(content.parentElement.querySelector(".bcvc-message-toggle"), null);
+    assert.equal(content.textContent, longText);
+    assert.deepEqual(times(), ["01:00", "01:02:03", "30:00"]);
 });
 
 test("VOD comment rendering caps total nested replies without hiding the limit", async (t) => {
@@ -1557,6 +2111,240 @@ test("VOD comment pagination coalesces observer requests and appends without rep
     assert.equal(mirroredRowScans, 1, "appending a page must sync native assets once for the new rows");
 });
 
+test("VOD comment stickers use the native width and retain their source aspect ratio and URL", async (t) => {
+    const sticker = {
+        attachType: "STICKER",
+        attachValue: "https://storep-phinf.pstatic.net/pack/sticker.png?type=p100_100",
+        extraJson: JSON.stringify({ width: 96, height: 96 }),
+    };
+    const photo = { attachType: "PHOTO", attachValue: "https://other.pstatic.net/photo.png?type=original" };
+    const fixture = createFixture({
+        fetchComments: () =>
+            apiContent({
+                rows: [
+                    apiComment(1, "", { attaches: [sticker] }),
+                    apiComment(2, "", { attaches: [sticker, photo] }),
+                    apiComment(3, "", { attaches: [photo] }),
+                ],
+                totalCount: 3,
+            }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    clickCommentTab(fixture.document);
+    await waitForCondition(() => fixture.document.querySelectorAll(".bcvc-attachment").length === 4);
+    const stickers = fixture.document.querySelectorAll('.bcvc-attachment[data-type="STICKER"]');
+    assert.equal(stickers.length, 2);
+    for (const image of stickers) {
+        const style = fixture.window.getComputedStyle(image);
+        assert.equal(image.src, sticker.attachValue);
+        assert.equal(image.alt, "댓글 스티커");
+        assert.deepEqual(
+            [style.width, style.height, style.maxWidth, style.borderRadius],
+            ["103px", "auto", "100%", "0px"]
+        );
+        assert.equal(style.backgroundColor, "rgba(0, 0, 0, 0)");
+        assert.equal(fixture.window.getComputedStyle(image.parentElement).marginTop, "5px");
+    }
+    for (const image of fixture.document.querySelectorAll('.bcvc-attachment[data-type="PHOTO"]')) {
+        assert.equal(image.src, photo.attachValue, "other image hosts keep their query parameters");
+    }
+});
+
+test("VOD photo rows keep native thumbnail sizes, count badges and the source photo order", async (t) => {
+    const photo = (id, width, height) => ({
+        attachType: "PHOTO",
+        attachValue: `https://nng-phinf.pstatic.net/${id}.jpg?type=original`,
+        extraJson: JSON.stringify({ width, height }),
+    });
+    const sticker = { attachType: "STICKER", attachValue: "https://storep-phinf.pstatic.net/sticker.png" };
+    const landscape = Array.from({ length: 5 }, (_, i) => photo(i + 1, 800, 450));
+    const mixed = [photo(1, 400, 700), ...landscape.slice(1)];
+    const fixture = createFixture({
+        fetchComments: () =>
+            apiContent({
+                rows: [
+                    apiComment(1, "", { attaches: landscape }),
+                    apiComment(2, "", { attaches: mixed }),
+                    apiComment(3, "", { attaches: [sticker, ...landscape] }),
+                    apiComment(4, "", { attaches: [sticker, ...mixed] }),
+                    apiComment(5, "", { attaches: [photo(1, 240, 1200)] }),
+                ],
+            }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    clickCommentTab(fixture.document);
+    await waitForCondition(() => fixture.document.querySelector('[data-bcvc-comment-id="5"] .bcvc-photo'));
+    const attachments = (id) => fixture.document.querySelector(`[data-bcvc-comment-id="${id}"] .bcvc-attachments`);
+    const combinations = [
+        [1, "wide", 2, "+3"],
+        [2, "square", 5, null],
+        [3, "wide", 1, "+4"],
+        [4, "square", 4, null],
+        [5, "single", 1, null],
+    ];
+    for (const [id, layout, count, more] of combinations) {
+        const wrapper = attachments(id);
+        const buttons = Array.from(wrapper.querySelectorAll("button.bcvc-photo"));
+        assert.equal(buttons.length, count);
+        assert.ok(buttons.every((button) => button.dataset.layout === layout));
+        assert.equal(buttons.at(-1).querySelector(".bcvc-photo-more")?.textContent ?? null, more);
+        assert.equal(fixture.window.getComputedStyle(wrapper).overflowX, "auto");
+        for (const [i, button] of buttons.entries()) {
+            assert.equal(button.getAttribute("aria-haspopup"), "dialog");
+            assert.equal(button.querySelector("img").src, `https://nng-phinf.pstatic.net/${i + 1}.jpg?type=w375`);
+        }
+    }
+    assert.ok(attachments(3).firstElementChild.matches('img[data-type="STICKER"]'));
+    assert.equal(attachments(3).querySelector("button").getAttribute("aria-label"), "첨부 사진 1/5 크게 보기");
+    assert.equal(attachments(5).querySelector("img").style.aspectRatio, "240 / 1200");
+
+    const strip = attachments(2);
+    Object.defineProperties(strip, { clientWidth: { value: 293 }, scrollWidth: { value: 547 } });
+    strip.getBoundingClientRect = () => ({ left: 0, right: 293 });
+    strip.scrollLeft = 238;
+    const last = strip.lastElementChild;
+    last.getBoundingClientRect = () => ({ left: 206, right: 309 });
+    last.focus();
+    assert.equal(strip.scrollLeft, 254, "the last tile and its focus outline are fully visible");
+    const first = strip.firstElementChild;
+    first.getBoundingClientRect = () => ({ left: -254, right: -151 });
+    first.focus();
+    assert.equal(strip.scrollLeft, 0);
+});
+
+test("VOD photo viewers keep playback keys away from page shortcuts and preserve button defaults", (t) => {
+    const fixture = createFixture();
+    const { document, window } = fixture;
+    t.after(() => window.close());
+    const windowKeys = [];
+    const recordKey = (event) => windowKeys.push(event.type);
+    window.addEventListener("keydown", recordKey);
+    window.addEventListener("keyup", recordKey);
+    function press(target, key, modifiers = {}) {
+        windowKeys.length = 0;
+        const targetKeys = [];
+        for (const type of ["keydown", "keyup"]) {
+            target.addEventListener(type, () => targetKeys.push(type), { once: true });
+            const event = new window.KeyboardEvent(type, { key, ...modifiers, bubbles: true, cancelable: true });
+            assert.equal(target.dispatchEvent(event), true, `${key} keeps its browser default`);
+        }
+        assert.deepEqual(targetKeys, ["keydown", "keyup"], "the focused viewer control gets both phases");
+        return [...windowKeys];
+    }
+    const pageKeys = ["keydown", "keyup"];
+    for (const viewer of [
+        '<div class="yarl__portal" role="dialog" aria-label="Lightbox"><button>다음</button></div>',
+        '<dialog class="bcvc-photo-viewer" open><button>다음</button></dialog>',
+    ]) {
+        document.body.insertAdjacentHTML("beforeend", viewer);
+        const dialog = document.body.lastElementChild;
+        for (const key of [" ", "f", "k", "m", "t", "c", "ㄹ", "ㅏ", "ㅡ", "ㅅ", "ㅊ"]) {
+            assert.deepEqual(press(dialog, key), []);
+        }
+        const button = dialog.querySelector("button");
+        assert.deepEqual(press(button, " "), []);
+        for (const key of ["Enter", "Tab", "Escape", "ArrowRight", "+"]) {
+            assert.deepEqual(press(button, key), pageKeys);
+        }
+        assert.deepEqual(press(button, "f", { ctrlKey: true }), pageKeys);
+        dialog.remove();
+    }
+    document.body.insertAdjacentHTML("beforeend", '<div role="dialog" aria-label="다른 패널"></div>');
+    assert.deepEqual(press(document.body.lastElementChild, "f"), pageKeys);
+    const portal = document.createElement("div");
+    portal.className = "yarl__portal";
+    portal.setAttribute("role", "dialog");
+    portal.setAttribute("aria-label", "Lightbox");
+    document.body.append(portal);
+    fixture.emitRoute("/");
+    assert.deepEqual(press(portal, "f"), pageKeys);
+    fixture.emitRoute("/video/456");
+    assert.deepEqual(press(portal, "f"), []);
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.deepEqual(press(portal, "f"), pageKeys);
+});
+
+test("VOD photo buttons delegate only the matching native gallery and open missing photos in a modal", async (t) => {
+    const src = (name) => `https://nng-phinf.pstatic.net/${name}.jpg`;
+    const fixture = createFixture({
+        fetchComments: () =>
+            apiContent({
+                rows: [
+                    apiComment(42, "사진", {
+                        attaches: ["first", "second"].map((name) => ({ attachType: "PHOTO", attachValue: src(name) })),
+                    }),
+                ],
+            }),
+        nativeCommentsHtml: `<div id="commentArea"><div id="commentBox-42"><div class="_attachment_test_1">
+            <button class="_image_button_test"><img src="${src("first")}?type=w375"></button>
+            <button class="_image_button_test"><span style='background-image:url("${src("second")}?type=w375")'></span></button>
+            </div><div id="commentBox-43"><div class="_attachment_reply_1"><button class="_image_button_reply">
+            <img src="${src("other")}?type=w375"></button></div></div></div></div>`,
+    });
+    const { document, window } = fixture;
+    // JSDOM does not implement the HTML dialog methods. Chrome's top layer is checked separately.
+    window.HTMLDialogElement.prototype.showModal = function () {
+        this.open = true;
+    };
+    window.HTMLDialogElement.prototype.close = function () {
+        this.open = false;
+        this.dispatchEvent(new window.Event("close"));
+    };
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        window.close();
+    });
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelectorAll(".bcvc-photo").length === 2);
+    const [first, second] = document.querySelectorAll(".bcvc-photo");
+    const nativeButtons = document.querySelectorAll("#commentBox-42 button");
+    const clicks = [];
+    nativeButtons.forEach((button, index) => button.addEventListener("click", () => clicks.push(index)));
+    second.click();
+    assert.deepEqual(clicks, [1]);
+    assert.equal(document.querySelector(".bcvc-photo-viewer"), null);
+
+    // A reused row still has this ID and second thumbnail, but its first photo now belongs to another album.
+    nativeButtons[0].querySelector("img").src = src("replacement") + "?type=w375";
+    second.click();
+    const dialog = document.querySelector("dialog.bcvc-photo-viewer[open]");
+    assert.ok(dialog);
+    assert.deepEqual(clicks, [1]);
+    const previousImage = dialog.querySelector("img");
+    assert.equal(previousImage.src, src("second"));
+    assert.equal(dialog.querySelector(".bcvc-photo-counter").textContent, "2 / 2");
+    assert.equal(dialog.querySelector("[data-direction='next']").disabled, true);
+    const prev = dialog.querySelector("[data-direction='prev']");
+    prev.focus();
+    prev.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    assert.equal(dialog.querySelector("img").src, src("first"));
+    previousImage.dispatchEvent(new window.Event("error"));
+    assert.equal(dialog.querySelector(".bcvc-photo-status").textContent, "사진 불러오는 중");
+    dialog.querySelector("img").dispatchEvent(new window.Event("load"));
+    assert.equal(dialog.querySelector(".bcvc-photo-status").hidden, true);
+    assert.equal(prev.disabled, true);
+    assert.equal(document.activeElement, dialog.querySelector(".bcvc-photo-stage"));
+    document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    assert.equal(dialog.querySelector("img").src, src("second"));
+    dialog.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(document.querySelector(".bcvc-photo-viewer"), null);
+    assert.equal(document.activeElement, second);
+
+    document.getElementById("commentArea").remove();
+    first.click();
+    assert.equal(document.querySelector("dialog[open] img").src, src("first"));
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.equal(document.querySelector(".bcvc-photo-viewer"), null);
+    first.click();
+    assert.equal(document.querySelector(".bcvc-photo-viewer"), null, "detached thumbnails cannot reopen a viewer");
+});
+
 test("VOD comment sorts cache loaded rows while refresh reloads only the active order", async (t) => {
     const fixture = createFixture({
         fetchComments: ({ orderType }, index) =>
@@ -1571,6 +2359,16 @@ test("VOD comment sorts cache loaded rows while refresh reloads only the active 
     clickCommentTab(document);
     await waitForCondition(() =>
         /POPULAR 댓글/.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
+    );
+    const sort = document.querySelector(".bcvc-sort");
+    const summary = sort.previousElementSibling;
+    assert.equal(summary.firstElementChild.getAttribute("data-bcvc-count"), "1");
+    assert.equal(summary.lastElementChild.getAttribute("data-bcvc-action"), "refresh");
+    assert.equal(fixture.window.getComputedStyle(sort).gap, "8px");
+    const style = fixture.window.getComputedStyle(sort.firstElementChild);
+    assert.deepEqual(
+        [style.fontSize, style.lineHeight, style.fontWeight, style.padding, style.minHeight],
+        ["13px", "14px", "400", "4px 6px", "28px"]
     );
     assert.deepEqual(
         Array.from(document.querySelectorAll("[data-bcvc-action='sort']")).map((button) => ({
@@ -1733,8 +2531,9 @@ test("VOD comment body keeps body typography before native comments arrive and a
     const panel = () => document.getElementById("cheese-spanner-vod-comment-panel");
     assert.equal(panel().style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
     document.getElementById("below-player").innerHTML =
-        '<div id="commentArea" style="font-family:Verdana,sans-serif"><div id="commentBox-1">원본 댓글</div></div>';
+        '<div id="commentArea" style="font-family:Verdana,sans-serif"><button style="font-family:Tahoma,serif">인기순</button><div id="commentBox-1">원본 댓글</div></div>';
     await waitForCondition(() => panel().style.getPropertyValue("--bcvc-font-family") === "Verdana, sans-serif");
+    assert.equal(panel().style.getPropertyValue("--bcvc-toolbar-font-family"), "Tahoma, serif");
     document.getElementById("commentArea").remove();
     Object.defineProperty(document, "fullscreenElement", {
         configurable: true,
@@ -1745,6 +2544,7 @@ test("VOD comment body keeps body typography before native comments arrive and a
     document.getElementById("player-layout").insertAdjacentHTML("beforeend", chatAsideHtml());
     await waitForCondition(() => panel());
     assert.equal(panel().style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
+    assert.equal(panel().style.getPropertyValue("--bcvc-toolbar-font-family"), "");
     assert.equal(
         document.getElementById("cheese-spanner-vod-comment-tabs").style.getPropertyValue("--bcvc-heading-font-family"),
         "Arial, sans-serif"
@@ -1817,7 +2617,7 @@ test("VOD comment rows capped by the per-order reply budget still show the reply
 });
 
 test("VOD comment load-more pages without new rows keep expanded replies and bodies in place", async (t) => {
-    const longText = Array.from({ length: 30 }, (_, index) => `긴 본문 ${index + 1}줄`).join("\n");
+    const longText = Array.from({ length: 30 }, (_, index) => `긴 본문 ${index + 1}줄 내용`).join("\n");
     const first = apiComment(1, longText);
     first.replyComments = [
         {
@@ -1852,7 +2652,8 @@ test("VOD comment load-more pages without new rows keep expanded replies and bod
     replyToggle.click();
     messageToggle.click();
     assert.equal(replyToggle.getAttribute("aria-expanded"), "true");
-    assert.equal(messageToggle.getAttribute("aria-expanded"), "true");
+    assert.equal(messageToggle.isConnected, false);
+    assert.equal(firstRow.querySelector(".bcvc-message-content").textContent, longText);
 
     document.querySelector("[data-bcvc-action='load-more']").click();
     await waitForCondition(() => fixture.requests.some((request) => request.offset === 10));
@@ -1863,8 +2664,8 @@ test("VOD comment load-more pages without new rows keep expanded replies and bod
     assert.equal(replyToggle.isConnected, true);
     assert.equal(replyToggle.getAttribute("aria-expanded"), "true");
     assert.equal(firstRow.querySelector(".bcvc-replies").hidden, false);
-    assert.equal(messageToggle.getAttribute("aria-expanded"), "true");
-    assert.match(firstRow.textContent, /긴 본문 30줄/);
+    assert.equal(firstRow.querySelector(".bcvc-message-toggle"), null);
+    assert.equal(firstRow.querySelector(".bcvc-message-content").textContent, longText);
     assert.ok(document.querySelector("[data-bcvc-action='load-more']"), "the footer still offers the next offset");
 });
 
@@ -2096,4 +2897,48 @@ test("VOD comment scroll events delivered to a hidden panel do not overwrite the
     chatTab().click();
     commentTab().click();
     assert.equal(panel.scrollTop, 0, "a visible scroll to the top must still be saved");
+});
+
+test("a previous video's late chat shell does not suppress the next video's comment-only panel", async (t) => {
+    for (const folded of [false, true]) {
+        await t.test(folded ? "new video has a replay-chat reopen control" : "new video is chatless", async (t) => {
+            const f = createFixture({
+                fetchComments: async () => apiContent({ rows: [apiComment(1, "새 영상 댓글")] }),
+            });
+            t.after(() => {
+                f.emitOptions({ vodCommentTabsEnabled: false });
+                f.window.close();
+            });
+            const { document } = f;
+            const old = document.getElementById("vod-aside");
+            const section = document.getElementById("player-layout");
+            const wrapper = document.createElement("div");
+            wrapper.innerHTML = '<div><div id="player_layout"><div class="header_info"></div></div></div>';
+            section.prepend(wrapper);
+            const header = wrapper.querySelector(".header_info");
+            assert.ok(old.querySelector("#cheese-spanner-vod-comment-tabs"));
+            f.emitRoute("/video/23456");
+            await waitForCondition(() => old.querySelector("#cheese-spanner-vod-comment-tabs"));
+            old.querySelector('[role="log"]').insertAdjacentHTML(
+                "beforeend",
+                '<div class="_item_old_1">이전 영상의 마지막 채팅</div>'
+            );
+            await Promise.resolve();
+            if (folded) header.innerHTML = '<button class="_folded_button_new_18">라이브 채팅 다시보기</button>';
+            old.remove();
+            if (folded) {
+                await delay(750);
+                assert.equal(document.getElementById("cheese-spanner-vod-comment-aside"), null);
+                assert.equal(f.requests.length, 0);
+                header.replaceChildren();
+            }
+            await waitForCondition(() =>
+                document.getElementById("cheese-spanner-vod-comment-aside")?.textContent.includes("새 영상 댓글")
+            );
+            assert.deepEqual(
+                f.requests.map((request) => request.objectId),
+                ["23456"]
+            );
+        });
+    }
 });

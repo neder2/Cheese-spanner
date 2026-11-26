@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
+const { dispatchTrusted } = require("./extension-page-fixture.js");
 const { createCategoryExclusionsWorker } = require("./category-exclusions-worker.js");
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -25,6 +26,7 @@ async function createCategoryUI(
         metadata,
         categoryCounts = {},
         bootstrapOptions = false,
+        initialTabUrl,
     } = {}
 ) {
     await worker.ready();
@@ -65,7 +67,7 @@ async function createCategoryUI(
     const listeners = new Set();
     const sender = {
         id: worker.storage.chrome.runtime.id,
-        tab: { id: 101, url: window.location.href },
+        tab: { id: 101, url: initialTabUrl ?? window.location.href },
         frameId: 0,
         url: window.location.href,
     };
@@ -255,6 +257,9 @@ async function createCategoryUI(
         timers,
         frames,
         messages,
+        commitTabUrl() {
+            sender.tab.url = window.location.href;
+        },
         listeners,
         optionsReads,
         categorySubscriptions: () => listeners.size - optionsListenerCount,
@@ -285,7 +290,7 @@ async function createCategoryUI(
             const input = window.document.querySelector("[data-category-search]");
             assert.ok(input);
             input.value = value;
-            input.dispatchEvent(new window.Event(type, { bubbles: true }));
+            dispatchTrusted(input, new window.Event(type, { bubbles: true }));
             return input;
         },
         runDelay() {
