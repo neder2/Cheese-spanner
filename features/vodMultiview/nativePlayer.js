@@ -4,7 +4,7 @@
     const MEDIA = "video.webplayer-internal-video";
     const HOST = "#player_layout.chzzk_player.type_vod";
     const SOURCE = /^vod3:\/\/2099:[\w-]+@([\w-]+)\?env=real(?:&[^#]*)?(?:#.*)?$/;
-    const VERIFIED_VERSIONS = new Set(["1.16.3", "1.17.0"]);
+    const VERIFIED_VERSIONS = new Set(["1.16.3", "1.17.0", "1.17.4"]);
     // Same five auxiliary positions as live multiview. Each core keeps its SDK heartbeat.
     const maxAuxiliary = 5;
     const slots = Array(maxAuxiliary).fill(undefined);

@@ -36,12 +36,18 @@
         return track.encodingTrackId && track.videoWidth > 0 && track.videoHeight > 0 ? track : null;
     }
 
+    const MAX_DURATION_SHORTFALL_SECONDS = 10;
+    const MAX_DURATION_OVERSHOOT_SECONDS = 2;
+
     function matchesCatalogDuration(seconds, catalogSeconds) {
         if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isFinite(catalogSeconds) || catalogSeconds <= 0)
             return false;
-        // The catalogue can report whole seconds while the rewind provider reports milliseconds.
+        // The catalogue reports whole seconds while the rewind provider reports milliseconds and can lag
+        // behind the catalogue/playlist by one or more HLS segments. Actual playback still checks
+        // video.duration against the catalogue within 2 seconds before syncing.
         const comparableSeconds = Number.isInteger(catalogSeconds) ? Math.round(seconds) : seconds;
-        return Math.abs(comparableSeconds - catalogSeconds) <= 2;
+        const shortfall = catalogSeconds - comparableSeconds;
+        return shortfall >= -MAX_DURATION_OVERSHOOT_SECONDS && shortfall <= MAX_DURATION_SHORTFALL_SECONDS;
     }
 
     function readRewindSource(value, videoId, duration) {

@@ -262,7 +262,7 @@
 .bcct-moderator-unread-divider::after{
   content:"";
   flex:1;
-  border-top:2px solid currentColor;
+  border-top:1px solid currentColor;
 }
 .bcct-moderator-authors{
   display:flex;
@@ -1233,7 +1233,7 @@
             moderatorUnreadDivider = document.createElement("div");
             moderatorUnreadDivider.className = "bcct-moderator-unread-divider";
             moderatorUnreadDivider.setAttribute("role", "separator");
-            moderatorUnreadDivider.textContent = "여기부터 새 메시지";
+            moderatorUnreadDivider.textContent = "새 메시지";
             moderatorUnreadDivider.setAttribute("aria-label", moderatorUnreadDivider.textContent);
 
             const authors = document.createElement("div");

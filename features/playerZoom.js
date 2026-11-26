@@ -704,6 +704,12 @@
 :is(#${ID}-toggle, .${ID}-toggle)[aria-pressed="true"] { color:var(--bct-brand-text); }
 .pzp-pc:not(.pzp-pc--controls) #${ID}-toggle:not(:focus-visible) { opacity:0; pointer-events:none; }
 #${ID}-panel, .${ID}-panel { --bcz-fill:var(--bct-text-body); --bcz-track:var(--bct-border-strong); position:absolute; right:16px; bottom:64px; z-index:50; display:flex; align-items:center; gap:6px; box-sizing:border-box; width:180px; max-width:calc(100% - 32px); padding:4px 6px; border:1px solid var(--bct-border); border-radius:var(--bct-radius-md); background:var(--bct-surface); color:var(--bct-text); box-shadow:var(--bct-shadow); font-family:var(--bct-font); font-size:12px; font-weight:500; line-height:1.5; cursor:grab; user-select:none; touch-action:none; transform:none; transition:none; }
+#player_layout.type_vod > .pzp-pc > #${ID}-panel { bottom:84px; }
+/* Keep comment chapter targets and their preview above the zoom panel, even after dragging it. */
+.pzp-pc--controls:not(.pzp-pc--setting):has(> #${ID}-panel:not([hidden]))
+    .pzp-pc__bottom > [data-bcvc-chapter-controls] { z-index:51; }
+.pzp-pc--controls:not(.pzp-pc--setting):has(> #${ID}-panel:not([hidden]))
+    > .pzp-pc__seeking-preview:has(> [data-bcvc-chapter-preview-title]) { z-index:52; }
 :is(#${ID}-panel, .${ID}-panel)[data-bcz-panel-dragging] { cursor:grabbing; }
 :is(#${ID}-value, .${ID}-value) { flex:0 0 4.5ch; text-align:right; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
 :is(#${ID}-reset, .${ID}-reset) { display:flex; align-items:center; justify-content:center; flex:0 0 24px; box-sizing:border-box; width:24px; height:24px; padding:4px; border:0; border-radius:var(--bct-radius-sm); background:transparent; color:inherit; font:inherit; cursor:pointer; transition:scale 120ms ease-out; }

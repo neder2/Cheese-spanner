@@ -78,8 +78,9 @@
     // 2026-11-04 bundle: the scroll/ad mini player (.miniplayer, .pre_ad_mini/.mid_ad_mini, z-index 1000-1002) is
     // position:fixed inside the host. Isolating an idle host traps it under the later-painted chat aside, so only the
     // active split layout (which contains its own z-indexed cells) isolates; the variables stay on every host.
-    const css = `${root.multiviewView.packedFrameCss}
+    const css = `
 [data-bcmv-host="active"],#${PANEL_ID}{isolation:isolate}
+[data-bcmv-host="active"]:not([data-bcmv-viewport]){background-color:var(--bct-viewer-bg)}
 [data-bcmv-host],#${PANEL_ID}{--bcmv-surface:var(--bct-surface);--bcmv-content:var(--bct-text);--bcmv-border:var(--bct-border-strong);--bcmv-brand-hover:var(--bct-brand-hover)}
 [data-bcmv-host="active"] > [data-bcmv-native]{position:absolute!important;left:var(--bcmv-main-left,0)!important;top:var(--bcmv-main-top,0)!important;width:var(--bcmv-main-width)!important;height:calc(100% * var(--bcmv-main-height))!important;min-width:0!important;min-height:0!important}
 [data-bcmv-viewport][popover]{position:fixed!important;inset:0!important;margin:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;padding:0!important;border:0!important;background:transparent!important;overflow:visible!important;pointer-events:none}
@@ -178,6 +179,7 @@
 .bcmv-separator:hover,.bcmv-separator:focus-visible{background:var(--bct-brand)}
 .bcmv-separator[data-axis="columns"]{width:6px;transform:translateX(-3px);cursor:col-resize}
 .bcmv-separator[data-axis="rows"]{height:6px;transform:translateY(-3px);cursor:row-resize}
+${root.multiviewView.bottomGripCss(`#${ID} .bcmv-separator[data-path="bottom"]`)}
 .bcmv-panel{position:fixed;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--bcmv-border) transparent;padding:14px;background:var(--bcmv-surface);color:var(--bcmv-content);border:1px solid var(--bcmv-line);border-radius:var(--bct-radius-lg);box-shadow:var(--bct-shadow);pointer-events:auto;z-index:var(--bct-z-player-panel);font:13px/1.5 var(--bct-font)}
 .bcmv-panel[hidden],.bcmv-panel [hidden]{display:none!important}
 .bcmv-panel{--bcmv-accent:var(--bct-brand-text);--bcmv-danger:var(--bct-danger);--bcmv-tool-surface:var(--bct-surface-weak);--bcmv-brand-fill:var(--bct-brand);--bcmv-line:var(--bct-border)}

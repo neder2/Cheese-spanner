@@ -1666,8 +1666,139 @@ test("metadata tags exclude candidates and reserved tag types never appear as ca
         [...ui.window.document.querySelectorAll("[data-category-results] .bcgt-category-name")].map(
             (name) => name.textContent
         ),
-        ["롤"]
+        ["#롤토체스", "#롤토체스대회", "롤"]
     );
+});
+
+test("live tag suggestions find gray tags and event badges, with separate exact exclusions for each name", async (t) => {
+    const row = (id, extra) => ({
+        liveId: id.charCodeAt(0),
+        channel: { channelId: "channel-" + id },
+        liveTitle: "중계",
+        concurrentUserCount: 2,
+        liveCategory: "Lol",
+        categoryType: "GAME",
+        liveCategoryValue: "게임",
+        liveImageUrl: "https://example.com/live.jpg",
+        ...extra,
+    });
+    const cup = { watchPartyNo: 569, watchPartyType: "NORMAL", watchPartyTag: "2026치지직컵" };
+    const ui = await createCategoryUI(t, {
+        metadata: [
+            row("a", { ...cup, tags: ["스텔라이브"] }),
+            row("b", { tags: ["스텔라이브팬", "치지직컵"] }),
+            row("d", { ...cup, tags: ["다른태그"] }),
+            row("e", { watchPartyNo: 571, watchPartyType: "NORMAL", watchPartyTag: "다른대회" }),
+        ],
+    });
+    const doc = ui.window.document;
+    const strip = doc.createElement("div");
+    strip.className = "_information_fixture _link_fixture";
+    strip.innerHTML =
+        '<a href="/watchparty/all" class="_item_tag_fixture"><span>같이보기</span></a><a href="/watchparty/569" class="_item_tag_fixture"><span>2026치지직컵</span></a><a href="/lives?tags=스텔라이브" class="_item_tag_fixture"><span>스텔라이브</span></a>';
+    doc.querySelector("#a .category").remove();
+    doc.getElementById("a").append(strip);
+    const panel = ui.open();
+    const find = (label) =>
+        [...panel.querySelectorAll("[data-category-add]")].find(
+            (b) => b.getAttribute("aria-label") === label + " 태그 제외"
+        );
+    const added = (id) => doc.querySelector(`[data-bcgt-injected="1"][data-bcgt-card-id="channel-${id}"]`);
+    const input = ui.input("스텔");
+    input.value = "치지직컵";
+    input.dispatchEvent(new ui.window.Event("input", { bubbles: true }));
+    ui.runDelay();
+    const request = ui.searches.at(-1);
+    assert.equal(new URL(request.url).searchParams.get("keyword"), "스텔");
+    request.resolve(result([category("GAME", "stella", "스텔라이브")]));
+    await settle();
+    assert.deepEqual(
+        [...panel.querySelectorAll(".bcgt-category-name")].map((n) => n.textContent),
+        ["#스텔라이브", "#스텔라이브팬", "스텔라이브"]
+    );
+    ui.trustedClick(find("스텔라이브"));
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.equal(hidden(ui, "b"), false);
+    assert.equal(added("d").querySelector('a[href="/category/GAME/Lol/lives"]').textContent, "게임");
+    assert.ok(added("d").querySelector('a[href="/watchparty/569"]'));
+    assert.ok(added("d").querySelector('a[href="/watchparty/all"]'));
+    assert.equal(added("d").textContent.includes("스텔라이브"), false);
+    ui.trustedClick(doc.querySelector("[data-category-summary-remove]"));
+    await settle();
+    await search(ui, "2026 치지직", []);
+    ui.trustedClick(find("2026치지직컵"));
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.equal(added("d"), null);
+    assert.ok(added("e"), "another event is still eligible");
+    strip.querySelector('[href="/watchparty/569"]').textContent = "새 대회";
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), false, "a native card's current event label supersedes stale metadata");
+    await search(ui, "같이", []);
+    ui.trustedClick(find("같이보기"));
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.equal(added("d"), null);
+    assert.equal(added("e"), null);
+    assert.equal(hidden(ui, "b"), false);
+});
+
+test("every matching tag remains selectable past fifty and when the category service fails", async (t) => {
+    const tags = Array.from({ length: 65 }, (_, i) => `대회종목${i + 1}`);
+    const metadata = tags.map((name, i) => ({
+        liveId: i + 1,
+        concurrentUserCount: 0,
+        tags: [name],
+        channel: { channelId: `channel-${i}` },
+    }));
+    const ui = await createCategoryUI(t, { metadata });
+    const panel = ui.open();
+    ui.input("대회종목");
+    ui.runDelay();
+    ui.searches.at(-1).reject(new Error("offline"));
+    await settle();
+    assert.match(panel.querySelector("[data-category-search-status]").textContent, /실패/);
+    assert.equal(panel.querySelectorAll("[data-category-add]").length, 50);
+    const more = panel.querySelector("[data-category-more-tags]");
+    assert.equal(more.hidden, false);
+    more.click();
+    assert.equal(more.hidden, true);
+    assert.equal(panel.querySelectorAll("[data-category-add]").length, 65);
+    ui.trustedClick(panel.querySelector('button[aria-label="대회종목65 태그 제외"]'));
+    await settle();
+    assert.equal(ui.worker.storage.local[CATEGORY_KEY].categories[0].categoryId, "대회종목65");
+    await search(ui, "#대회종목6", []);
+    assert.equal(panel.querySelector(".bcgt-category-name").textContent, "#대회종목6");
+});
+
+test("recommended order reads native watch-party, drops and non-link badges without popular-list metadata", async (t) => {
+    const ui = await createCategoryUI(t);
+    const doc = ui.window.document;
+    for (const b of doc.querySelectorAll("#sort button"))
+        b.setAttribute("aria-selected", String(b.textContent === "추천"));
+    const card = doc.getElementById("b");
+    card.insertAdjacentHTML(
+        "beforeend",
+        '<div class="_information_fixture _link_fixture"><a href="/watchpartyPLUS/all">같이보기+</a><a href="/watchparty/57">농구 결승</a><a href="/category/SPORTS/A/lives#drops">드롭스</a><div class="_item_tag_fixture"><span>프라임</span></div></div>'
+    );
+    await ui.hooks.apply();
+    const panel = ui.open();
+    for (const name of ["같이보기+", "농구 결승", "드롭스", "프라임"]) {
+        await search(ui, name, []);
+        ui.trustedClick(panel.querySelector(`[aria-label="${name} 태그 제외"]`));
+        await settle();
+        await ui.hooks.apply();
+        assert.equal(hidden(ui, "b"), true);
+        assert.equal(hidden(ui, "a"), false);
+        ui.trustedClick(doc.querySelector("[data-category-summary-remove]"));
+        await settle();
+        await ui.hooks.apply();
+        assert.equal(hidden(ui, "b"), false);
+    }
 });
 
 test("the exclusion option hides the row and stops filtering without erasing the saved list", async (t) => {

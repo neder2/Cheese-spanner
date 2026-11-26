@@ -2,7 +2,8 @@
 (() => {
     const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const model = root.multiviewModel;
-    const { el, text } = root.multiviewView;
+    const view = root.multiviewView;
+    const { el, text } = view;
     function create({ state, players, persistSession, onOrder: syncPanelOrder, onSwap: swap, onLayerChange, onError }) {
         const { current, moveSlotAudio } = players;
         let host = null,
@@ -14,7 +15,6 @@
             pointerDrag = null,
             suppressDragClick = false,
             resize = null;
-        let fitFrame = null;
         let viewportLayer = false,
             ownsPopover = false,
             dockBounds = null;
@@ -90,11 +90,7 @@
             if (!overlay || !host || !tree) return;
             const migrated = syncViewportLayer();
             const free = freeActive();
-            const layout = free ? model.freeLayout(state) : model.treeLayout(tree);
-            if (!resize && !pointerDrag && !dragState)
-                fitFrame(
-                    !state.freeLayoutEnabled && state.customLayout && tree.axis === "columns" ? layout.cells : null
-                );
+            const layout = free ? model.freeLayout(state) : model.splitLayout(tree);
             const bounds = layoutBounds();
             host.toggleAttribute("data-bcmv-free", free);
             for (const cell of overlay.querySelectorAll(".bcmv-cell")) {
@@ -160,43 +156,12 @@
                 if (!handle) {
                     handle = el("div", "bcmv-separator");
                     handle.dataset.path = item.key;
-                    handle.dataset.axis = item.axis;
-                    handle.tabIndex = 0;
+                    if (item.key !== "bottom") handle.tabIndex = 0;
                     handle.setAttribute("role", "separator");
-                    handle.setAttribute(
-                        "aria-label",
-                        item.axis === "columns" ? "세로 경계 크기 조절" : "가로 경계 크기 조절"
-                    );
-                    handle.setAttribute("aria-orientation", item.axis === "columns" ? "vertical" : "horizontal");
                     grid.append(handle);
                 }
-                if (handle.dataset.axis !== item.axis) {
-                    handle.style.cssText = "";
-                    handle.dataset.axis = item.axis;
-                    handle.setAttribute(
-                        "aria-label",
-                        item.axis === "columns" ? "세로 경계 크기 조절" : "가로 경계 크기 조절"
-                    );
-                    handle.setAttribute("aria-orientation", item.axis === "columns" ? "vertical" : "horizontal");
-                }
-                handle.setAttribute("aria-valuenow", String(Math.round(item.value * 100)));
-                handle.setAttribute("aria-valuemin", String(Math.round(item.lower * 100)));
-                handle.setAttribute("aria-valuemax", String(item.collapseBelow ? 100 : Math.round(item.upper * 100)));
-                handle.title = item.collapseBelow ? "아래 끝까지 끌거나 End 키를 누르면 빈 하단 영역 접기" : "";
-                Object.assign(
-                    handle.style,
-                    item.axis === "columns"
-                        ? {
-                              left: item.position * 100 + "%",
-                              top: item.start * 100 + "%",
-                              height: item.length * 100 + "%",
-                          }
-                        : {
-                              top: item.position * 100 + "%",
-                              left: item.start * 100 + "%",
-                              width: item.length * 100 + "%",
-                          }
-                );
+                if (handle.dataset.axis !== item.axis) handle.dataset.axis = item.axis;
+                view.drawDivider(handle, item);
             }
             if (!pointerDrag && !resize && tree === state.dockTree) syncPanelOrder(layout.cells);
             if (migrated) persistSession();
@@ -475,7 +440,7 @@
                 cells,
                 dragId,
                 rect,
-                dragState.openRowBounds,
+                dragState.target?.side === "bottom-row",
                 event.clientX,
                 event.clientY
             );
@@ -514,7 +479,6 @@
         function previewDrop(target) {
             if (!dragState || dragState.target?.key === target?.key) return;
             dragState.target = target;
-            root.multiviewView.previewBottomRow(dragState, target, fitFrame, host);
             const { guide, source, tree } = dragState;
             if (!target) {
                 guide.hidden = true;
@@ -650,17 +614,24 @@
         }
         function onResizeStart(event) {
             const handle = event.target.closest(".bcmv-separator");
-            if (!handle || event.button !== 0 || dragId) return;
+            if (!handle || event.button !== 0 || event.isPrimary === false || dragId) return;
             event.preventDefault();
             cancelResize();
-            handle.focus({ preventScroll: true });
+            const layout = model.splitLayout(state.dockTree);
+            const item = layout.handles.find((entry) => entry.key === handle.dataset.path);
+            if (!item) return;
+            if (item.key === "bottom") {
+                // The grip disappears mid-drag. Keep the existing gesture cancellation on the stable overlay.
+                overlay.tabIndex = -1;
+                overlay.focus({ preventScroll: true });
+            } else handle.focus({ preventScroll: true });
             const guide = el("div", "bcmv-snap-guide");
             guide.dataset.axis = handle.dataset.axis;
             guide.hidden = true;
             overlay.querySelector(".bcmv-grid").append(guide);
             resize = {
-                handle: model.treeLayout(state.dockTree).handles.find((item) => item.key === handle.dataset.path),
-                rect: overlay.querySelector(".bcmv-grid").getBoundingClientRect(),
+                handle: item,
+                bounds: overlay.querySelector(".bcmv-grid").getBoundingClientRect(),
                 startX: event.clientX,
                 startY: event.clientY,
                 tree: state.dockTree,
@@ -794,14 +765,17 @@
                 onCornerMove(event);
                 return;
             }
-            const { handle, rect } = resize,
+            const { handle, bounds: rect } = resize,
                 axis = handle.axis;
             const horizontal = axis === "columns",
                 region = handle.region;
             const pixels = (horizontal ? rect.width : rect.height) * (horizontal ? region[2] : region[3]);
             const start =
                 (horizontal ? rect.left : rect.top) + (horizontal ? rect.width * region[0] : rect.height * region[1]);
-            const raw = ((horizontal ? event.clientX : event.clientY) - start) / pixels;
+            const raw =
+                handle.key === "bottom"
+                    ? 1 + (event.clientY - resize.startY) / pixels
+                    : ((horizontal ? event.clientX : event.clientY) - start) / pixels;
             const result = model.snapRatio(handle, raw, pixels, resize.locked, handle.value);
             resize.locked = result.locked;
             resize.guide.hidden = result.locked === null;
@@ -911,12 +885,12 @@
             const handle = event.target.closest(".bcmv-separator");
             if (!handle) return;
             const item = model.treeLayout(state.dockTree).handles.find((entry) => entry.key === handle.dataset.path);
+            if (!item) return;
             const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
-            const fold = event.key === "End" && item?.collapseBelow;
-            if (!item || (!step && !fold)) return;
+            if (!step) return;
             event.preventDefault();
             event.stopPropagation();
-            adjustSplit(item, fold ? 1 : item.value + step * 0.01);
+            adjustSplit(item, Math.min(item.value + step * 0.01, item.upper));
             persistSession();
         }
 
@@ -933,8 +907,6 @@
             document.removeEventListener("visibilitychange", onVisibility);
             host?.removeAttribute("data-bcmv-free");
             host?.style.removeProperty("--bcmv-main-layer");
-            fitFrame?.();
-            fitFrame = null;
             overlay?.removeEventListener("keydown", onKey);
             host = native = overlay = null;
             dockBounds = null;
@@ -945,7 +917,6 @@
             native = nextNative;
             overlay = nextOverlay;
             routeId = mainId;
-            fitFrame = root.multiviewView.createFrameFitter(native, host, (id) => players.get(id)?.video);
             host.addEventListener("pointerdown", onPointerDown, true);
             host.addEventListener("click", onHostClick, true);
             host.addEventListener("dragstart", onNativeDragStart, true);
@@ -967,7 +938,7 @@
             return true;
         }
         function onHostResize() {
-            if (!state.active || viewportLayer || root.multiviewView.isPreviewResize(dragState, host)) return;
+            if (!state.active || viewportLayer) return;
             cancelResize();
             endDrag();
             positionCells();

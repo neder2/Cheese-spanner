@@ -329,6 +329,7 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
   --bcvc-border:var(--bct-border-alpha);
   --bcvc-brand:var(--bct-brand-text);
   --bcvc-hover:var(--bct-hover);
+  --bcvc-content-inset:16px;
   position:absolute;
   z-index:1;
   top:var(--bcvc-panel-top,44px);
@@ -343,7 +344,7 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
   overscroll-behavior:contain;
   scrollbar-gutter:stable;
   contain:size layout paint;
-  container-type:inline-size;
+  container-type:size;
   background:var(--bcvc-surface);
   color:var(--bcvc-text-base);
   font-family:var(--bcvc-font-family,inherit);
@@ -359,13 +360,23 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
   display:flex;
   flex-wrap:wrap;
   align-items:center;
-  gap:6px;
+  gap:6px 12px;
   min-width:0;
   min-height:44px;
-  padding:6px 10px 6px 12px;
+  padding-block:7px;
+  padding-inline:var(--bcvc-content-inset);
   border-bottom:1px solid var(--bcvc-border);
   background:color-mix(in srgb,var(--bcvc-surface) 94%,transparent);
   backdrop-filter:blur(8px);
+}
+/* Let the two-row toolbar scroll away when the split leaves little room for comments. */
+@container (max-height:110px){.bcvc-toolbar{position:static}}
+.bcvc-toolbar-summary{
+  display:flex;
+  flex:0 1 auto;
+  align-items:center;
+  gap:6px;
+  min-width:0;
 }
 .bcvc-count{
   flex:0 1 auto;
@@ -383,14 +394,15 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
   display:flex;
   flex:0 0 auto;
   align-items:center;
-  gap:4px;
-  margin-left:auto;
+  gap:8px;
+  margin-inline-start:auto;
 }
 .bcvc-sort-button{
   position:relative;
+  min-height:28px;
   border:0;
   border-radius:0;
-  padding:4px 5px;
+  padding:4px 6px;
   background:transparent;
   color:var(--bct-text-secondary);
   font-family:var(--bcvc-toolbar-font-family,"Sandoll Nemony2",sans-serif);
@@ -404,10 +416,11 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
 .bcvc-sort-button+.bcvc-sort-button::before{
   content:"";
   position:absolute;
-  top:9px;
-  left:-3px;
+  top:50%;
+  inset-inline-start:-5px;
   width:2px;
   height:2px;
+  transform:translateY(-50%);
   border-radius:50%;
   background:var(--bct-separator-dot);
   pointer-events:none;
@@ -435,19 +448,20 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
 .bcvc-icon-button svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.8}
 .bcvc-sort-button:disabled,
 .bcvc-icon-button:disabled{cursor:default;opacity:.45}
-.bcvc-list{min-width:0;padding:0 6px 0 8px}
+.bcvc-list{min-width:0;padding-inline:var(--bcvc-content-inset)}
 .bcvc-comment{
   position:relative;
   min-width:0;
   min-height:0;
-  padding:12px 0 7px 46px;
+  padding-block:12px 7px;
+  padding-inline-start:46px;
   content-visibility:auto;
   contain-intrinsic-size:auto 74px;
 }
 .bcvc-avatar{
   position:absolute;
   top:12px;
-  left:0;
+  inset-inline-start:0;
   display:block;
   width:36px;
   height:36px;
@@ -496,13 +510,13 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
 .bcvc-buff[aria-pressed="true"] .bcvc-buff-count{color:var(--bcvc-brand);font-weight:600}
 .bcvc-replies{min-width:0;margin:4px 0 0 12px}
 .bcvc-replies[hidden]{display:none!important}
-.bcvc-replies .bcvc-comment{padding:9px 0 5px 30px}
+.bcvc-replies .bcvc-comment{padding-block:9px 5px;padding-inline-start:30px}
 .bcvc-replies .bcvc-avatar{top:9px;width:22px;height:22px}
 .bcvc-replies .bcvc-message{font-size:14px;line-height:1.5}
 .bcvc-mention{display:inline-block;margin-right:5px;color:var(--bcvc-brand);font-size:15px;font-weight:700;line-height:20px}
 .bcvc-reply-limit{margin:3px 0 4px 20px;color:var(--bcvc-text-weak);font-size:12px;line-height:18px}
 .bcvc-reply-limit[hidden]{display:none!important}
-.bcvc-comment[data-bcvc-deleted="1"]{padding-left:0}
+.bcvc-comment[data-bcvc-deleted="1"]{padding-inline-start:0}
 .bcvc-attachments{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;margin-top:5px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;line-height:0}
 .bcvc-attachments[data-sticker-wide]{column-gap:15px}
 .bcvc-attachment{display:block;max-width:100%}
@@ -519,9 +533,9 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
 .bcvc-state p{margin:0;font-family:inherit;font-size:13px;font-weight:500;line-height:20px}
 .bcvc-state-button,.bcvc-more-button{min-height:36px;border:0;border-radius:var(--bct-radius-md);padding:8px 14px;background:color-mix(in srgb,var(--bcvc-surface-soft) 65%,transparent);color:var(--bcvc-text);font-family:inherit;font-size:13px;font-weight:700;line-height:18px;cursor:pointer}
 .bcvc-state-button:hover,.bcvc-more-button:hover{background:var(--bcvc-hover)}
-.bcvc-skeleton-list{padding:0 6px 0 8px}
-.bcvc-skeleton{position:relative;min-height:72px;padding:12px 0 12px 46px;overflow:hidden}
-.bcvc-skeleton::before{content:"";position:absolute;top:12px;left:0;width:36px;height:36px;border-radius:50%;background:var(--bcvc-surface-soft)}
+.bcvc-skeleton-list{padding-inline:var(--bcvc-content-inset)}
+.bcvc-skeleton{position:relative;min-height:72px;padding-block:12px;padding-inline-start:46px;overflow:hidden}
+.bcvc-skeleton::before{content:"";position:absolute;top:12px;inset-inline-start:0;width:36px;height:36px;border-radius:50%;background:var(--bcvc-surface-soft)}
 .bcvc-skeleton-line{height:10px;margin:2px 0 10px;border-radius:var(--bct-radius-full);background:var(--bcvc-surface-soft)}
 .bcvc-skeleton-line:first-child{width:44%}.bcvc-skeleton-line:last-child{width:82%;margin-bottom:0}
 .bcvc-skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,var(--bcvc-hover),transparent);animation:bcvc-shimmer 1.4s infinite}
@@ -554,9 +568,6 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
 .bcvc-photo-status{position:absolute;inset:50% 0 auto;margin:0;text-align:center}
 .bcvc-photo-viewer [hidden]{display:none}
 @keyframes bcvc-shimmer{to{transform:translateX(100%)}}
-@container (max-width:300px){
-  .bcvc-toolbar{gap:4px;padding-inline:6px}
-}
 @media (prefers-reduced-motion:reduce){.bcvc-skeleton::after{animation:none}}
 `
             );
@@ -1351,13 +1362,14 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
         function createToolbar(state) {
             const toolbar = document.createElement("div");
             toolbar.className = "bcvc-toolbar";
+            const summary = document.createElement("div");
+            summary.className = "bcvc-toolbar-summary";
             const count = document.createElement("strong");
             count.className = "bcvc-count";
             count.setAttribute("data-bcvc-count", "1");
             count.textContent = Number.isFinite(state.totalCount)
                 ? `댓글 ${state.totalCount.toLocaleString()}`
                 : "댓글";
-            toolbar.appendChild(count);
 
             const sort = document.createElement("div");
             sort.className = "bcvc-sort";
@@ -1382,7 +1394,8 @@ M29.1248 13 V6.53215 H26.8825 V4.87012 H33.4292 V6.53215 H31.1869 V13 H29.1248 Z
             refresh.title = "댓글 새로고침";
             refresh.disabled = state.loading;
             refresh.appendChild(createRefreshIcon());
-            toolbar.append(refresh, sort);
+            summary.append(count, refresh);
+            toolbar.append(summary, sort);
             return toolbar;
         }
 

@@ -246,14 +246,24 @@ test("unmeasurable or oversized notices cannot consume the once-per-version rese
 test("countdown starts after approval and manual replay starts its own full countdown", async (t) => {
     const f = fixture(t, { deferred: true });
     await f.advance(2000);
+    const toast = f.toast();
+    assert.equal(toast.style.visibility, "hidden");
+    assert.doesNotMatch(
+        f.win.getComputedStyle(toast).animation,
+        /\bbcug-in\b/,
+        "preparing the notice cannot start its fade"
+    );
     const claim = f.pending.shift();
     assert.equal(f.animations.length, 0);
     claim.callback(claim.response);
     await f.flush();
     const commit = f.pending.shift();
+    await f.advance(1000);
     assert.equal(f.animations.length, 0);
     commit.callback(commit.response);
     await f.flush();
+    assert.equal(toast.style.visibility, "");
+    assert.match(f.win.getComputedStyle(toast).animation, /\bbcug-in\b/, "the fade starts when the notice is revealed");
     const progress = f.toast().querySelector("[data-bcug-progress]");
     const animation = f.animations[0];
     assert.equal(progress.getAttribute("aria-hidden"), "true");
@@ -995,11 +1005,17 @@ test("a floating mini player or PiP parks the notice without consuming it or cou
     const staged = committing.toast();
     assert.ok(staged, "an approved notice is kept for the player's return");
     assert.equal(staged.style.visibility, "hidden");
+    assert.doesNotMatch(committing.win.getComputedStyle(staged).animation, /\bbcug-in\b/);
     await committing.advance(60000);
     assert.equal(committing.toast(), staged);
+    committing.hide(true);
     mini.classList.remove("miniplayer");
     await committing.flush();
+    assert.equal(staged.style.visibility, "hidden", "returning in a background tab cannot start the entrance");
+    assert.doesNotMatch(committing.win.getComputedStyle(staged).animation, /\bbcug-in\b/);
+    committing.hide(false);
     assert.equal(staged.style.visibility, "");
+    assert.match(committing.win.getComputedStyle(staged).animation, /\bbcug-in\b/);
     await committing.advance(19999);
     assert.equal(committing.toast(), staged);
     await committing.advance(1);

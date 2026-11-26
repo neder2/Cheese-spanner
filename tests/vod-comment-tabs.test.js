@@ -3,9 +3,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
+const { createFakeChrome, dispatchTrusted } = require("./helpers/extension-page-fixture.js");
 const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
 
 const ROOT = path.resolve(__dirname, "..");
+const AUTO_DISMISSAL_KEY = "cheese-spanner:vod-comment-auto-chapters-dismissed:12345";
 
 function evalRepoScript(dom, ...parts) {
     dom.window.eval(fs.readFileSync(path.join(ROOT, ...parts), "utf8"));
@@ -109,11 +111,13 @@ function chatAsideHtml({ includeLog = true } = {}) {
 }
 
 function createFixture({
+    chrome,
     fetchComments,
     includeAside = true,
     includeLog = true,
     initialOptions = {},
     nativeCommentsHtml = null,
+    videoNo = "12345",
     trackLifecycle = false,
     withIdleCallback = true,
     withIntersectionObserver = false,
@@ -138,14 +142,15 @@ function createFixture({
               "</div></section>",
           ];
     const dom = new JSDOM(["<!doctype html><html><head></head><body>", ...pageHtml, "</body></html>"].join(""), {
-        url: "https://chzzk.naver.com/video/12345",
+        url: `https://chzzk.naver.com/video/${videoNo}`,
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });
     const { window } = dom;
     const { document } = window;
+    if (chrome) window.chrome = chrome;
     document.body.style.fontFamily = "system-ui, sans-serif";
-    const options = { vodCommentTabsEnabled: true, ...initialOptions };
+    const options = { vodCommentTabsEnabled: true, vodCommentAutoChaptersEnabled: true, ...initialOptions };
     const optionListeners = [];
     const routeListeners = [];
     const requests = [];
@@ -282,6 +287,7 @@ function createFixture({
     evalRepoScript(dom, "features", "vodComments", "repository.js");
     evalRepoScript(dom, "features", "vodComments", "nativeAdapter.js");
     evalRepoScript(dom, "features", "vodComments", "view.js");
+    evalRepoScript(dom, "features", "vodComments", "chapters.js");
     if (trackLifecycle) {
         const nativeAdapterModule = window.CheeseSpanner.vodComments.nativeAdapter;
         const viewModule = window.CheeseSpanner.vodComments.view;
@@ -355,6 +361,434 @@ function delay(ms = 0) {
 function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 10 } = {}) {
     return waitForSharedCondition(predicate, { timeoutMs, intervalMs });
 }
+
+function createChapterFixture(t, rows, { chrome, fetchComments, folded = false, initialOptions = {}, videoNo } = {}) {
+    const nativeRow = ([id, text]) => `<div id="commentBox-${id}">
+        <div class="_header_19chc_66"><div class="_more_19chc_53"><button type="button">더보기</button>
+        <ul class="_layer_19chc_155"><li><button type="button" class="_option_19chc_166">신고</button></li></ul>
+        </div></div><div class="_content_19chc_40"><div class="_text_19chc_193">${text}</div></div>
+    </div>`;
+    const fixture = createFixture({
+        chrome,
+        fetchComments,
+        includeAside: false,
+        initialOptions: { ...initialOptions, ...(folded ? { vodCommentTabsEnabled: false } : {}) },
+        nativeCommentsHtml: `<div id="commentArea">${rows.map(nativeRow).join("")}</div>`,
+        videoNo,
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    const { document, video } = fixture;
+    const layout = document.getElementById("player_layout");
+    const player = document.createElement("div");
+    player.className = "pzp-pc pzp-pc--controls pzp-pc--seekable";
+    player.innerHTML = `<div class="pzp-pc__bottom">
+        <div class="pzp-pc__progress-slider" role="slider" tabindex="0"><div class="pzp-ui-slider__wrap"></div></div>
+    </div>`;
+    player.prepend(video);
+    layout.append(player);
+    if (folded) {
+        player.insertAdjacentHTML(
+            "afterbegin",
+            '<div class="header_info"><button class="_folded_button_fixture_18">채팅 다시보기 열기</button></div>'
+        );
+        fixture.emitOptions({ vodCommentTabsEnabled: true });
+    }
+    const menuAction = (id) => document.querySelector(`#commentBox-${id} [data-bcvc-chapter-action]`);
+    const controls = () => player.querySelector("[data-bcvc-chapter-controls]");
+    const segments = () => [...controls().querySelectorAll(".bcvc-chapter-segment")];
+    return { ...fixture, controls, menuAction, player, segments };
+}
+
+test("a folded replay chat applies automatic chapters when the video becomes visible", async (t) => {
+    const preview = '긴 댓글... <button type="button" class="_button_more_19chc_53">더보기</button>';
+    const full = "0:00 시작\n0:20 추천 댓글\n0:40 마지막 장면";
+    const fixture = createChapterFixture(
+        t,
+        [
+            [1, "추천이 많은 일반 댓글"],
+            [2, "0:05 다른 댓글\n0:10 중간\n0:15 끝"],
+            [3, preview],
+        ],
+        {
+            folded: true,
+            initialOptions: { vodCommentAutoChaptersEnabled: false },
+            fetchComments: async () =>
+                apiContent({
+                    best: [apiComment(1, "추천이 많은 일반 댓글", { buffCount: 120 })],
+                    rows: [
+                        apiComment(2, "0:05 다른 댓글\n0:10 중간\n0:15 끝", { buffCount: 5 }),
+                        apiComment(3, full, { buffCount: 30 }),
+                    ],
+                }),
+        }
+    );
+    const { controls, document, mediaState, menuAction, requests, segments, window } = fixture;
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel"), null);
+    assert.equal(
+        fixture.runIdleCallbacks(),
+        0,
+        "a folded panel has no automatic-only prefetch while the switch is off"
+    );
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    assert.equal(fixture.runIdleCallbacks(), 0);
+    assert.equal(requests.length, 0);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+    assert.equal(fixture.runIdleCallbacks(), 1);
+    await waitForCondition(controls);
+    assert.deepEqual(
+        segments().map((button) => button.getAttribute("aria-label")),
+        ["0:00 시작", "0:20 추천 댓글", "0:40 마지막 장면"]
+    );
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].orderType, "POPULAR");
+    assert.equal(mediaState.currentTime, 100);
+    assert.ok(document.querySelector("#commentBox-3 ._text_19chc_193 button"), "the native comment stays collapsed");
+    assert.equal(menuAction(3).textContent, "챕터 해제");
+    menuAction(3).click();
+    assert.equal(controls(), null);
+});
+
+test("the automatic chapter switch hides only automatic chapters and honors a saved opt-out", async (t) => {
+    const full = "0:00 시작\n0:20 자동 추천\n0:40 마지막 장면";
+    const fixture = createChapterFixture(t, [[1, "0:15 직접 선택"]], {
+        initialOptions: { vodCommentAutoChaptersEnabled: false },
+        fetchComments: () => apiContent({ best: [apiComment(1, full, { buffCount: 30 })] }),
+    });
+    const { controls, document, menuAction, requests, segments } = fixture;
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='1']"));
+    assert.equal(controls(), null);
+    assert.equal(menuAction(1).textContent, "챕터 추가");
+
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    await waitForCondition(controls);
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:20 자동 추천");
+    assert.equal(requests.length, 1, "turning on the feature uses the cached first response");
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: false });
+    assert.equal(controls(), null);
+    assert.equal(menuAction(1).textContent, "챕터 추가");
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:20 자동 추천");
+
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: false });
+    menuAction(1).click();
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:15 직접 선택");
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: false });
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:15 직접 선택");
+    menuAction(1).click();
+    fixture.emitOptions({ vodCommentAutoChaptersEnabled: true });
+    assert.equal(controls(), null);
+});
+
+test("dismissing automatic chapters remembers just that video in a fresh document", async (t) => {
+    const chrome = createFakeChrome({ local: { existing: true } });
+    const full = "0:00 시작\n0:20 자동 추천\n0:40 마지막 장면";
+    const fetchComments = () => apiContent({ best: [apiComment(1, full, { buffCount: 30 })] });
+    const first = createChapterFixture(t, [[1, full]], { chrome, fetchComments });
+    await waitForCondition(first.controls);
+    dispatchTrusted(first.menuAction(1), new first.window.MouseEvent("click", { bubbles: true }));
+    assert.equal(first.controls(), null);
+    await waitForCondition(() => chrome.testState.local[AUTO_DISMISSAL_KEY] === true);
+    assert.deepEqual(chrome.testState.local, { existing: true, [AUTO_DISMISSAL_KEY]: true });
+
+    const getLocal = chrome.storage.local.get.bind(chrome.storage.local);
+    let finishStoredRead;
+    chrome.storage.local.get = (key, callback) => {
+        finishStoredRead = () => getLocal(key, callback);
+    };
+    const reloaded = createChapterFixture(t, [[1, full]], { chrome, fetchComments });
+    await waitForCondition(() => reloaded.document.querySelector(".bcvc-comment[data-bcvc-comment-id='1']"));
+    assert.equal(reloaded.controls(), null, "automatic chapters wait for the saved preference");
+    finishStoredRead();
+    chrome.storage.local.get = getLocal;
+    await delay();
+    assert.equal(reloaded.controls(), null);
+    assert.equal(reloaded.menuAction(1).textContent, "챕터 추가");
+    reloaded.menuAction(1).click();
+    assert.ok(reloaded.controls(), "the saved preference still allows a manual selection");
+
+    const next = createChapterFixture(t, [[1, full]], { chrome, fetchComments, videoNo: "54321" });
+    await waitForCondition(next.controls);
+    assert.equal(next.menuAction(1).textContent, "챕터 해제");
+});
+
+test("synthetic clicks, manual clears, and incognito dismissals do not write a video preference", async (t) => {
+    const chrome = createFakeChrome();
+    const full = "0:00 시작\n0:20 자동 추천\n0:40 마지막 장면";
+    const fetchComments = () => apiContent({ best: [apiComment(1, full, { buffCount: 30 })] });
+    const regular = createChapterFixture(t, [[1, full]], { chrome, fetchComments });
+    await waitForCondition(regular.controls);
+    regular.menuAction(1).click();
+    assert.equal(regular.controls(), null);
+    assert.equal(chrome.testState.local[AUTO_DISMISSAL_KEY], undefined);
+    regular.menuAction(1).click();
+    dispatchTrusted(regular.menuAction(1), new regular.window.MouseEvent("click", { bubbles: true }));
+    assert.equal(regular.controls(), null);
+    assert.equal(chrome.testState.local[AUTO_DISMISSAL_KEY], undefined);
+
+    const incognitoChrome = createFakeChrome({ local: { [AUTO_DISMISSAL_KEY]: true } });
+    incognitoChrome.extension = { inIncognitoContext: true };
+    incognitoChrome.storage.local.set = () => assert.fail("incognito must not write a dismissal");
+    const incognito = createChapterFixture(t, [[1, full]], { chrome: incognitoChrome, fetchComments });
+    await waitForCondition(incognito.controls);
+    dispatchTrusted(incognito.menuAction(1), new incognito.window.MouseEvent("click", { bubbles: true }));
+    assert.equal(incognito.controls(), null);
+});
+
+test("a failed dismissal write keeps the current chapters cleared and exposes the storage error", async (t) => {
+    const chrome = createFakeChrome();
+    chrome.storage.local.set = (_, callback) => {
+        chrome.runtime.lastError = { message: "Quota exceeded" };
+        callback();
+        delete chrome.runtime.lastError;
+    };
+    const full = "0:00 시작\n0:20 자동 추천\n0:40 마지막 장면";
+    const fixture = createChapterFixture(t, [[1, full]], {
+        chrome,
+        fetchComments: () => apiContent({ best: [apiComment(1, full, { buffCount: 30 })] }),
+    });
+    await waitForCondition(fixture.controls);
+    dispatchTrusted(fixture.menuAction(1), new fixture.window.MouseEvent("click", { bubbles: true }));
+    await waitForCondition(() => fixture.document.querySelector(".bcvc-chapter-storage-error"));
+    assert.equal(fixture.controls(), null);
+    assert.equal(chrome.testState.local[AUTO_DISMISSAL_KEY], undefined);
+});
+
+test("a manual choice and clear take precedence over delayed and refreshed automatic candidates", async (t) => {
+    const first = deferred();
+    const full = "0:00 시작\n0:20 추천 댓글\n0:40 마지막 장면";
+    const fixture = createChapterFixture(
+        t,
+        [
+            [1, "0:35 직접 추가"],
+            [2, full],
+        ],
+        {
+            fetchComments: (_, index) =>
+                index === 0 ? first.promise : apiContent({ best: [apiComment(3, full, { buffCount: 70 })] }),
+        }
+    );
+    const { controls, document, menuAction, requests, segments } = fixture;
+    menuAction(1).click();
+    await waitForCondition(controls);
+    first.resolve(apiContent({ best: [apiComment(2, full, { buffCount: 60 })] }));
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='2']"));
+    assert.equal(segments().at(-1).getAttribute("aria-label"), "0:35 직접 추가");
+    menuAction(1).click();
+    assert.equal(controls(), null);
+    document.querySelector("[data-bcvc-action='refresh']").click();
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='3']"));
+    assert.equal(requests.length, 2);
+    assert.equal(controls(), null);
+});
+
+test("automatic chapters defer to official chapters and wait for the next video's own media", async (t) => {
+    const full = "0:00 시작\n0:20 추천 댓글\n0:40 마지막 장면";
+    const fixture = createChapterFixture(t, [[1, full]], {
+        fetchComments: ({ objectId }) =>
+            apiContent({
+                best: [apiComment(objectId === "12345" ? 1 : 2, full, { buffCount: 20 })],
+            }),
+    });
+    const { controls, document, player, video, segments } = fixture;
+    player.classList.add("pzp-pc--chapter");
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='1']"));
+    assert.equal(controls(), null);
+    fixture.emitRoute("/video/54321");
+    await waitForCondition(() => document.querySelector(".bcvc-comment[data-bcvc-comment-id='2']"));
+    player.classList.remove("pzp-pc--chapter");
+    await delay();
+    assert.equal(controls(), null);
+    const nextMedia = document.createElement("video");
+    Object.defineProperty(nextMedia, "duration", { value: 60 });
+    video.replaceWith(nextMedia);
+    await waitForCondition(controls);
+    assert.equal(segments().at(-1).getAttribute("aria-label"), "0:40 마지막 장면");
+});
+
+test("native comment menus select, replace and clear VOD chapters without changing the native seek control", async (t) => {
+    const fixture = createChapterFixture(t, [
+        [1, "0:03 첫 장면\n1:24:30 보스전\n2:00:00 영상 끝"],
+        [2, "0:20 다른 댓글"],
+        [3, "일반 댓글"],
+    ]);
+    const { controls, document, mediaState, menuAction, player, segments, window } = fixture;
+    let slider = player.querySelector("[role='slider']");
+    await waitForCondition(() => menuAction(1)?.textContent === "챕터 추가");
+
+    assert.equal(menuAction(1).parentElement.previousElementSibling.textContent, "신고");
+    assert.equal(menuAction(3), null);
+    menuAction(1).click();
+    assert.equal(menuAction(1).textContent, "챕터 해제");
+    assert.equal(slider.nextElementSibling, controls());
+    assert.deepEqual(
+        segments().map((button) => button.getAttribute("aria-label")),
+        ["0:00 영상 시작", "0:03 첫 장면", "1:24:30 보스전"]
+    );
+    assert.equal(segments()[2].querySelector(".bcvc-chapter-tooltip").textContent, "1:24:30 보스전");
+    assert.equal(mediaState.currentTime, 100, "adding chapters must preserve position");
+    mediaState.paused = true;
+    segments()[2].click();
+    assert.equal(mediaState.currentTime, 5070);
+    assert.equal(mediaState.paused, true);
+
+    const oldSlider = slider;
+    slider = slider.cloneNode(true);
+    slider.removeAttribute("data-bcvc-chapter-slider");
+    oldSlider.replaceWith(slider);
+    await waitForCondition(() => slider.nextElementSibling === controls());
+    assert.equal(oldSlider.hasAttribute("data-bcvc-chapter-slider"), false);
+    assert.equal(slider.getAttribute("role"), "slider");
+    menuAction(2).click();
+    assert.equal(menuAction(1).textContent, "챕터 추가");
+    assert.equal(segments()[1].getAttribute("aria-label"), "0:20 다른 댓글");
+
+    player.classList.add("pzp-pc--chapter");
+    await waitForCondition(() => !controls() && menuAction(1)?.disabled);
+    assert.equal(slider.hasAttribute("data-bcvc-chapter-slider"), false);
+    assert.equal(menuAction(1).textContent, "공식 챕터 사용 중");
+    assert.equal(menuAction(2).textContent, "챕터 해제");
+    player.classList.remove("pzp-pc--chapter");
+    await waitForCondition(controls);
+    assert.equal(controls().querySelector(".bcvc-chapter-clear"), null);
+    const clear = menuAction(2);
+    clear.focus();
+    clear.click();
+    assert.equal(document.activeElement, clear);
+    assert.equal(clear.textContent, "챕터 추가");
+    assert.equal(controls(), null);
+
+    menuAction(1).click();
+    assert.ok(controls());
+    const previousMenuAction = menuAction(1);
+    fixture.emitRoute("/video/54321");
+    assert.equal(controls(), null);
+    previousMenuAction.click();
+    assert.equal(controls(), null, "an old video's still-open menu cannot select chapters in the new video");
+    assert.equal(menuAction(1), null);
+    const oldMenu = document.querySelector("#commentBox-1 ul");
+    oldMenu.replaceWith(oldMenu.cloneNode(true));
+    await waitForCondition(() => menuAction(1)?.textContent === "챕터 추가");
+    assert.equal(menuAction(1).textContent, "챕터 추가");
+    menuAction(1).click();
+    assert.ok(controls());
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.equal(menuAction(1), null);
+    assert.equal(controls(), null);
+    assert.equal(slider.hasAttribute("data-bcvc-chapter-slider"), false);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chapters-style"), null);
+    assert.equal(window.location.pathname, "/video/54321");
+});
+
+test("selecting a collapsed native comment waits for its full text and ignores a stale expansion after navigation", async (t) => {
+    const more = '<button type="button" class="_button_more_19chc_53">더보기</button>';
+    const fixture = createChapterFixture(t, [
+        [1, `0:03 첫 장면\n긴 댓글... ${more}`],
+        [2, `앞부분에 시각이 없는 긴 댓글... ${more}`],
+        [3, `타임스탬프 없는 댓글... ${more}`],
+    ]);
+    const { controls, document, mediaState, menuAction, segments } = fixture;
+    const body = (id) => document.querySelector(`#commentBox-${id} ._text_19chc_193`);
+    const onExpand = (id, callback) => body(id).querySelector("button").addEventListener("click", callback);
+
+    onExpand(1, () =>
+        queueMicrotask(() => {
+            body(1).textContent = "0:03 첫 장면\n1:24:30 숨겨진 보스전";
+        })
+    );
+    menuAction(1).click();
+    assert.equal(controls(), null, "the collapsed preview must never become the selected chapters");
+    await waitForCondition(controls);
+    assert.deepEqual(
+        segments().map((button) => button.getAttribute("aria-label")),
+        ["0:00 영상 시작", "0:03 첫 장면", "1:24:30 숨겨진 보스전"]
+    );
+    segments().at(-1).click();
+    assert.equal(mediaState.currentTime, 5070);
+    menuAction(1).click();
+    assert.equal(controls(), null);
+
+    onExpand(3, () => {
+        body(3).textContent = "타임스탬프 없는 댓글의 전체 본문";
+    });
+    menuAction(3).click();
+    assert.equal(controls(), null);
+    assert.equal(menuAction(3).textContent, "표시할 챕터 없음");
+
+    let revealSecond;
+    onExpand(2, () => {
+        revealSecond = () => {
+            body(2).textContent = "0:20 숨겨진 챕터";
+        };
+    });
+    assert.equal(menuAction(2).textContent, "챕터 추가");
+    menuAction(2).click();
+    assert.equal(typeof revealSecond, "function", "a comment with all timestamps below the fold can be selected");
+    fixture.emitRoute("/video/54321");
+    revealSecond();
+    await delay();
+    assert.equal(controls(), null);
+    assert.equal(menuAction(2), null);
+});
+
+test("chapter hover follows the native frame preview and only forwards hover events", async (t) => {
+    const { controls, document, mediaState, menuAction, player, segments, window } = createChapterFixture(t, [
+        [1, "0:03 첫 장면\n1:24:30 보스전"],
+    ]);
+    const slider = player.querySelector("[role='slider']");
+    const preview = document.createElement("div");
+    preview.className = "pzp-pc__seeking-preview";
+    preview.innerHTML =
+        '<div class="pzp-seeking-preview__description"><div class="pzp-seeking-preview__time"></div></div>';
+    player.prepend(preview);
+    const description = preview.firstElementChild;
+    const previewTitle = () => description.getAttribute("data-bcvc-chapter-preview-title");
+    const events = [];
+    for (const type of ["mouseover", "mousemove", "mouseleave", "mousedown", "click"]) {
+        slider.addEventListener(type, (event) => events.push([event.type, event.clientX, event.clientY]));
+    }
+    menuAction(1).click();
+    await waitForCondition(controls);
+    const [, first, second] = segments();
+    const move = (target, clientX, buttons = 0) => {
+        target.dispatchEvent(new window.MouseEvent("mousemove", { bubbles: true, clientX, clientY: 480, buttons }));
+    };
+    const leave = (relatedTarget = null) => {
+        controls().dispatchEvent(new window.MouseEvent("mouseleave", { relatedTarget }));
+    };
+
+    move(first, 130);
+    assert.equal(previewTitle(), "첫 장면");
+    move(second, 920);
+    assert.equal(previewTitle(), "보스전");
+    move(second, 925, 1);
+    assert.deepEqual(events, [
+        ["mouseover", 130, 480],
+        ["mousemove", 130, 480],
+        ["mousemove", 920, 480],
+    ]);
+    assert.equal(mediaState.currentTime, 100);
+
+    leave(slider);
+    assert.equal(previewTitle(), null);
+    assert.equal(events.length, 3, "crossing to native scrub space leaves the native preview available");
+    move(first, 145);
+    leave();
+    assert.equal(previewTitle(), null);
+    assert.equal(events.at(-1)[0], "mouseleave");
+
+    move(first, 145);
+    menuAction(1).click();
+    assert.equal(previewTitle(), null);
+    assert.equal(controls(), null);
+    assert.equal(events.at(-1)[0], "mouseleave");
+});
 
 function clickCommentTab(document) {
     document.getElementById("cheese-spanner-vod-comment-comment-tab").click();
@@ -672,8 +1106,9 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     );
     assert.doesNotMatch(css, /"Malgun Gothic"|"맑은 고딕"/);
     assert.match(css, /button\[aria-selected="true"\]\{\s*color:var\(--bcvc-text/);
-    assert.match(css, /container-type:inline-size/);
-    assert.match(css, /@container\s*\(max-width:300px\)/);
+    assert.match(css, /container-type:size/);
+    assert.match(css, /\.bcvc-toolbar\{[^}]*flex-wrap:wrap/s);
+    assert.match(css, /@container\s*\(max-height:110px\)\{\.bcvc-toolbar\{position:static\}\}/);
     assert.match(
         css,
         /#cheese-spanner-vod-comment-chat-tab,\s*#cheese-spanner-vod-comment-comment-tab\{[^}]*flex:0 0 auto[^}]*padding:0 2px/s
@@ -1415,7 +1850,7 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     assert.equal(reply.querySelector(".bcvc-message")?.textContent.trim(), "작성자 1답글 00:30");
     const injectedStyle = document.getElementById("cheese-spanner-vod-comment-tabs-style").textContent;
     assert.match(injectedStyle, /\.bcvc-replies\{[^}]*margin:4px 0 0 12px[^}]*\}/s);
-    assert.match(injectedStyle, /\.bcvc-replies \.bcvc-comment\{[^}]*padding:9px 0 5px 30px[^}]*\}/s);
+    assert.match(injectedStyle, /\.bcvc-replies \.bcvc-comment\{[^}]*padding-block:9px 5px;padding-inline-start:30px/s);
     assert.match(injectedStyle, /\.bcvc-replies \.bcvc-avatar\{[^}]*width:22px[^}]*height:22px[^}]*\}/s);
     const directReplyRow = document.querySelector("[data-bcvc-comment-id='7']");
     assert.match(directReplyRow.textContent, /직접 답글 00:45/);
@@ -1926,12 +2361,14 @@ test("VOD comment sorts cache loaded rows while refresh reloads only the active 
         /POPULAR 댓글/.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     const sort = document.querySelector(".bcvc-sort");
-    assert.equal(sort.previousElementSibling.getAttribute("data-bcvc-action"), "refresh");
-    assert.equal(fixture.window.getComputedStyle(sort).gap, "4px");
+    const summary = sort.previousElementSibling;
+    assert.equal(summary.firstElementChild.getAttribute("data-bcvc-count"), "1");
+    assert.equal(summary.lastElementChild.getAttribute("data-bcvc-action"), "refresh");
+    assert.equal(fixture.window.getComputedStyle(sort).gap, "8px");
     const style = fixture.window.getComputedStyle(sort.firstElementChild);
     assert.deepEqual(
-        [style.fontSize, style.lineHeight, style.fontWeight, style.padding],
-        ["13px", "14px", "400", "4px 5px"]
+        [style.fontSize, style.lineHeight, style.fontWeight, style.padding, style.minHeight],
+        ["13px", "14px", "400", "4px 6px", "28px"]
     );
     assert.deepEqual(
         Array.from(document.querySelectorAll("[data-bcvc-action='sort']")).map((button) => ({

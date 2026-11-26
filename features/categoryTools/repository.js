@@ -75,10 +75,44 @@
         return `${API_BASE}/v2/categories/${type}/${id}/${route.tab}?${params.toString()}`;
     }
 
+    // 전체 방송 카드는 일반 태그와 드롭스·같이보기·프라임 표시를 별도 필드로 받는다.
+    function liveCardTags(item) {
+        const tags = [];
+        if (item.paidProductId || item.watchPartyPaidProductId) tags.push({ name: "프라임", kind: "prime", href: "" });
+        if (item.dropsCampaignNo != null && root.categoryExclusions.categoryKey(item.categoryType, item.liveCategory))
+            tags.push({
+                name: "드롭스",
+                kind: "highlight",
+                href: `/category/${item.categoryType}/${encodeURIComponent(item.liveCategory.toWellFormed())}/lives#drops`,
+            });
+        if (Number.isSafeInteger(item.watchPartyNo) && item.watchPartyNo >= 0) {
+            const plus = item.watchPartyType === "RS";
+            tags.push({
+                name: plus ? "같이보기+" : "같이보기",
+                kind: "highlight",
+                href: plus ? "/watchpartyPLUS/all" : "/watchparty/all",
+            });
+            const event = root.categoryExclusions.createTagExclusion(item.watchPartyTag);
+            if (event)
+                tags.push({ name: event.categoryValue, kind: "highlight", href: `/watchparty/${item.watchPartyNo}` });
+        }
+        for (const value of Array.isArray(item.tags) ? item.tags : []) {
+            const tag = root.categoryExclusions.createTagExclusion(value);
+            if (tag)
+                tags.push({
+                    name: tag.categoryValue,
+                    kind: "tag",
+                    href: `/lives?${new URLSearchParams({ tags: tag.categoryValue })}`,
+                });
+        }
+        return tags;
+    }
+
     function mapApiItem(route, item) {
         if (route.tab === "lives") {
             const channel = item.channel || {};
             const categoryKey = root.categoryExclusions?.categoryKey(item.categoryType, item.liveCategory);
+            const cardTags = liveCardTags(item);
             return {
                 id: String(channel.channelId || ""),
                 channelId: String(channel.channelId || ""),
@@ -93,7 +127,8 @@
                 categoryType: categoryKey ? item.categoryType : "",
                 categoryId: categoryKey ? item.liveCategory : "",
                 categoryName: item.liveCategoryValue || "",
-                tags: item.tags || [],
+                tags: cardTags.map((tag) => tag.name),
+                cardTags,
                 liveId: Number(item.liveId) || 0,
                 adult: Boolean(item.adult),
             };
@@ -148,6 +183,7 @@
         let liveCountGeneration = 0;
         const pageRequests = new Map();
         const pageCache = new Map();
+        let liveTagCatalog = null;
         let metadataGeneration = 0;
         let metadataRetryAt = 0;
         let metadataRetryDelayMs = METADATA_RETRY_INITIAL_MS;
@@ -402,7 +438,10 @@
             resetSearchMetadata(key);
             cancelGlobalLiveCount();
             pageCache.clear();
-            if (invalidateLiveCount) liveCountCache = null;
+            if (invalidateLiveCount) {
+                liveCountCache = null;
+                liveTagCatalog = null;
+            }
         }
 
         function resetSearchMetadata(key = metadataKey) {
@@ -486,6 +525,79 @@
                     if (pageRequests.get(url) === request) pageRequests.delete(url);
                 });
             return request.promise;
+        }
+
+        // 제외 검색에서만 전체 라이브의 끝까지 읽는다. 집계의 10명 경계·화면 정렬과 독립이다.
+        // 검색어가 바뀌면 남은 요청만 취소하고, 다음 입력은 확인한 태그와 커서부터 이어받는다.
+        async function loadLiveTagCatalog(signal, onTags) {
+            if (signal.aborted) throw categorySearchAbortError();
+            if (!liveTagCatalog || Date.now() - liveTagCatalog.measuredAt >= LIVE_COUNT_CACHE_TTL_MS)
+                liveTagCatalog = {
+                    tags: new Map(),
+                    seen: new Set(),
+                    cursor: null,
+                    complete: false,
+                    measuredAt: Date.now(),
+                };
+            const catalog = liveTagCatalog;
+            const route = { scope: "global-lives", tab: "lives" };
+            const consumer = {};
+            const cancel = () => cancelPageConsumer(consumer);
+            signal.addEventListener("abort", cancel, { once: true });
+            try {
+                onTags(catalog.tags.values());
+                for (let i = 0; !catalog.complete && i < MAX_SHARED_PAGES; i++) {
+                    if (signal.aborted || catalog !== liveTagCatalog) throw categorySearchAbortError();
+                    const cursor = catalog.cursor;
+                    const entry = await loadSharedPageEntry(route, cursor, consumer);
+                    if (signal.aborted || catalog !== liveTagCatalog) throw categorySearchAbortError();
+                    if (catalog.cursor !== cursor || catalog.complete) continue;
+                    const rows = entry.json?.content?.data;
+                    if ((entry.json?.code !== undefined && entry.json.code !== 200) || !Array.isArray(rows))
+                        throw new Error("Live tags unavailable");
+                    const next = rows.length ? entry.json.content.page?.next : null;
+                    if (next) {
+                        const key = apiUrl(route, next);
+                        if (
+                            !Number.isSafeInteger(next.concurrentUserCount) ||
+                            next.concurrentUserCount < 0 ||
+                            !Number.isSafeInteger(next.liveId) ||
+                            next.liveId < 0 ||
+                            catalog.seen.has(key)
+                        ) {
+                            const pageUrl = apiUrl(route, cursor);
+                            if (pageCache.get(pageUrl) === entry) pageCache.delete(pageUrl);
+                            throw new Error("Invalid live tag cursor");
+                        }
+                        catalog.seen.add(key);
+                    }
+                    catalog.measuredAt = Math.min(catalog.measuredAt, entry.measuredAt);
+                    const added = [];
+                    for (const row of rows) {
+                        if (
+                            !row?.channel?.channelId ||
+                            !Number.isSafeInteger(Number(row.liveId)) ||
+                            Number(row.liveId) <= 0
+                        )
+                            continue;
+                        for (const { name } of liveCardTags(row)) {
+                            const key = root.categoryExclusions.tagMatchKey(name);
+                            if (!catalog.tags.has(key)) {
+                                catalog.tags.set(key, name);
+                                added.push(name);
+                            }
+                        }
+                    }
+                    catalog.cursor = next || null;
+                    catalog.complete = !next;
+                    if (added.length) onTags(added);
+                }
+                // 겹친 소비자가 먼저 병합한 페이지도 마지막 발행에 포함한다.
+                onTags(catalog.tags.values());
+                return catalog.complete;
+            } finally {
+                signal.removeEventListener("abort", cancel);
+            }
         }
 
         function mergeMetadataPage(route, json) {
@@ -863,6 +975,7 @@
 
         return Object.freeze({
             searchCategories,
+            loadLiveTagCatalog,
             cancelCategorySearch,
             countGlobalLives,
             cancelGlobalLiveCount,

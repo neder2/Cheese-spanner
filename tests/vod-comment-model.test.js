@@ -67,6 +67,55 @@ test("parseTimecodeSeconds accepts MM:SS and HH:MM:SS while rejecting invalid fi
     assert.equal(Number.isNaN(parseTimecodeSeconds("100:00:00")), true);
 });
 
+test("comment chapters pair timestamps with nearby titles, sort them and prefer titled duplicates", (t) => {
+    const { dom, model } = createModelFixture();
+    t.after(() => dom.window.close());
+    const text = [
+        "1:05:01 — 보스전",
+        "2:03",
+        "[0:00] 시작",
+        "2:03: 첫 경기 | 35:10-두 번째 경기",
+        "엔딩 (1:49:29)",
+        "날짜 12:64, https://example.test/3:00, 1:02:03:04",
+    ].join("\n");
+    assert.deepEqual(
+        Array.from(model.parseCommentChapters(text), ({ seconds, title }) => [seconds, title]),
+        [
+            [0, "시작"],
+            [123, "첫 경기"],
+            [2110, "두 번째 경기"],
+            [3901, "보스전"],
+            [6569, "엔딩"],
+        ]
+    );
+});
+
+test("automatic chapters choose the most recommended visible comment with three distinct in-range timestamps", (t) => {
+    const { dom, model } = createModelFixture();
+    t.after(() => dom.window.close());
+    const three = "0:00 시작\n0:20 첫 장면\n0:40 두 번째 장면";
+    const entry = (id, content, buffCount, comment = {}) => ({
+        row: apiComment(id, content, { comment, row: { buffNerf: { buffCount } } }),
+    });
+    const items = [
+        { best: true, ...entry(1, three, 20) },
+        entry(2, "0:00 시작 0:00 중복 0:20 첫 장면 1:00 끝", 90),
+        entry(3, three, 80, { deleted: true }),
+        entry(4, three, 80, { secret: true }),
+        entry(5, three, 80, { hideByCleanBot: true }),
+        entry(6, three, 80, { commentType: "REPLY" }),
+        entry(7, `${three}\n0:55 끝`, 40),
+        entry(8, three, 40),
+    ];
+    const selected = model.selectAutomaticChapterComment(items, 60);
+    assert.equal(selected.commentId, "7");
+    assert.deepEqual(
+        Array.from(selected.chapters, (chapter) => chapter.seconds),
+        [0, 20, 40, 55]
+    );
+    assert.equal(model.selectAutomaticChapterComment(items, 40), null);
+});
+
 test("comment and reply keys are stable without mutating API rows", (t) => {
     const fixture = createModelFixture();
     t.after(() => fixture.dom.window.close());

@@ -108,58 +108,33 @@
         node.replaceChildren(svg);
     }
 
-    const packedFrame =
-        "[data-bcmv-packed]:not(:fullscreen,.miniplayer,.pip_mode):not(:has(:fullscreen,.chzzk_player:is(.miniplayer,.pip_mode)))";
-    const packedFrameCss = `
-${packedFrame}[data-bcmv-packed="native"]::before { padding-top:calc(100% / var(--bcmv-packed-aspect)) !important; }
-${packedFrame}[data-bcmv-packed="host"] { height:auto !important; aspect-ratio:var(--bcmv-packed-aspect) !important; }
+    function bottomGripCss(selector) {
+        return `
+${selector} { left:0; bottom:0; width:100%; height:8px; transform:none; z-index:4; background:transparent; cursor:row-resize; }
+${selector}::before { content:""; position:absolute; inset:auto 0 0; height:2px; background:var(--bct-brand); opacity:0; pointer-events:none; }
+${selector}:hover::before { opacity:1; }
 `;
-    function createFrameFitter(player, host, videoFor) {
-        // CHZZK reserves 16:9 with ::before on the container around its absolute player wrapper.
-        const parent = player.parentElement;
-        const wrapper = player.closest('[class^="_wrapper_"], [class*=" _wrapper_"]');
-        const frame =
-            wrapper &&
-            (wrapper === parent || wrapper === parent?.parentElement) &&
-            wrapper.parentElement?.matches('[class^="_container_"], [class*=" _container_"]')
-                ? wrapper.parentElement
-                : host;
-        return function fitFrame(cells) {
-            let height = 0;
-            if (cells?.length > 1 && cells.every(({ id }) => id)) {
-                for (const {
-                    id,
-                    rect: [, , w, h],
-                } of cells) {
-                    const video = videoFor(id);
-                    const aspect =
-                        video?.videoWidth > 0 && video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 16 / 9;
-                    height = Math.max(height, w / (h * aspect));
-                }
-            }
-            if (height > 0 && height < 9 / 16 - 1e-6) {
-                const ratio = String(1 / height);
-                if (frame.style.getPropertyValue("--bcmv-packed-aspect") !== ratio)
-                    frame.style.setProperty("--bcmv-packed-aspect", ratio);
-                const mode = frame === host ? "host" : "native";
-                if (frame.dataset.bcmvPacked !== mode) frame.dataset.bcmvPacked = mode;
-            } else if (frame.hasAttribute("data-bcmv-packed")) {
-                frame.removeAttribute("data-bcmv-packed");
-                frame.style.removeProperty("--bcmv-packed-aspect");
-            }
-        };
     }
-    function previewBottomRow(drag, drop, fitFrame, host) {
-        const open = drop?.side === "bottom-row";
-        if (Boolean(drag.openRowBounds) === open) return;
-        fitFrame(open ? null : drag.cells);
-        drag.previewBounds = host.getBoundingClientRect();
-        drag.openRowBounds = open ? drag.previewBounds : null;
-    }
-    function isPreviewResize(drag, host) {
-        if (!drag?.previewBounds) return false;
-        const { width, height } = host.getBoundingClientRect();
-        return width === drag.previewBounds.width && height === drag.previewBounds.height;
+    function drawDivider(divider, handle) {
+        const { key, axis, value, position, start, length, lower, upper, collapseBelow } = handle;
+        const vertical = axis === "columns";
+        divider.setAttribute("aria-orientation", vertical ? "vertical" : "horizontal");
+        if (key === "bottom") {
+            divider.setAttribute("aria-label", "접힌 하단 줄 펼치기");
+            divider.title = "위로 끌어 하단 줄 펼치기";
+            return;
+        }
+        divider.setAttribute("aria-valuenow", String(Math.round(value * 100)));
+        divider.setAttribute("aria-valuemin", String(Math.round(lower * 100)));
+        divider.setAttribute("aria-valuemax", String(Math.round(upper * 100)));
+        divider.setAttribute("aria-label", vertical ? "세로 경계 크기 조절" : "가로 경계 크기 조절");
+        divider.title = collapseBelow ? "아래 끝까지 끌어 빈 하단 영역 접기" : "";
+        Object.assign(divider.style, {
+            left: (vertical ? position : start) * 100 + "%",
+            top: (vertical ? start : position) * 100 + "%",
+            width: vertical ? "" : length * 100 + "%",
+            height: vertical ? length * 100 + "%" : "",
+        });
     }
 
     root.multiviewView = {
@@ -170,10 +145,8 @@ ${packedFrame}[data-bcmv-packed="host"] { height:auto !important; aspect-ratio:v
         panelIcon,
         multiviewIcon,
         setControlIcon,
-        createFrameFitter,
-        previewBottomRow,
-        isPreviewResize,
-        packedFrameCss,
+        bottomGripCss,
+        drawDivider,
         action: (node) => controlActions.get(node),
     };
 })();

@@ -217,6 +217,7 @@
             toast.style.removeProperty("visibility");
             toast.removeAttribute("aria-hidden");
             toast.removeAttribute("inert");
+            toast.toggleAttribute("data-bcug-shown", true);
         }
     }
     function parkToast() {
@@ -413,6 +414,8 @@
             removeTutorial();
         } else if (!visible()) {
             blurred();
+        } else if (parked) {
+            layoutChanged();
         } else {
             waitForLayout = false;
             resumeTimer();
@@ -447,7 +450,7 @@
             waitForLayout = true;
             cancelPending();
             removeToast();
-        } else if (parked) {
+        } else if (parked && visible()) {
             parked = false;
             setToastHidden(false);
             hovered = toast.matches(":hover");

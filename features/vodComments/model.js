@@ -26,6 +26,10 @@
     ]);
     const IMAGE_ATTACHMENT_TYPES = Object.freeze(["PHOTO", "STICKER", "EMOTICON"]);
     const DEFAULT_IMAGE_BASE_URL = "https://chzzk.naver.com/";
+    const CHAPTER_TIMECODE = /(?:^|[\s([（［|])((?:\d{1,2}:)?\d{1,2}:\d{2})(?!:\d)(?=$|[\s)\]）］|,.:：–—~～-])/g;
+    const CHAPTER_TITLE_SEPARATOR = /^[\s()[\]（）［］|,.:：–—~～-]+|[\s()[\]（）［］|,.:：–—~～-]+$/g;
+    const MAX_COMMENT_CHAPTERS = 100;
+    const MIN_AUTOMATIC_CHAPTERS = 3;
 
     function compactText(value) {
         return String(value || "")
@@ -369,6 +373,56 @@
         return content.slice(0, cutoff) + "...";
     }
 
+    function parseCommentChapters(text) {
+        const chapters = new Map();
+        for (const line of text.split(/\r?\n/)) {
+            const matches = [...line.matchAll(CHAPTER_TIMECODE)];
+            for (const [index, match] of matches.entries()) {
+                const [, timecode] = match;
+                const seconds = root.utils.parseTimecodeSeconds(timecode);
+                if (!Number.isFinite(seconds)) continue;
+                const next = matches[index + 1];
+                const endOfTime = match.index + match[0].length;
+                const description = line.slice(endOfTime, next?.index);
+                const beforeTime = matches.length === 1 ? line.slice(0, match.index) : "";
+                const title =
+                    compactText(description.replace(CHAPTER_TITLE_SEPARATOR, "")) ||
+                    compactText(beforeTime.replace(CHAPTER_TITLE_SEPARATOR, ""));
+                const previous = chapters.get(seconds);
+                if (!previous || (!previous.title && title)) {
+                    chapters.set(seconds, { seconds, timecode, title });
+                }
+            }
+        }
+        return [...chapters.values()].sort((a, b) => a.seconds - b.seconds).slice(0, MAX_COMMENT_CHAPTERS);
+    }
+
+    function selectAutomaticChapterComment(items, duration) {
+        let selected = null;
+        let highestBuffCount = -1;
+        for (const item of items) {
+            const row = item?.row;
+            const comment = row?.comment;
+            if (
+                typeof comment?.content !== "string" ||
+                comment.deleted ||
+                comment.hideByCleanBot ||
+                comment.secret ||
+                (comment.commentType && comment.commentType !== "COMMENT")
+            )
+                continue;
+            const id = comment.commentId;
+            if ((typeof id !== "string" && typeof id !== "number") || !/^[1-9]\d*$/.test(String(id))) continue;
+            const buffCount = Number(row.buffNerf?.buffCount ?? 0);
+            if (!Number.isSafeInteger(buffCount) || buffCount <= highestBuffCount) continue;
+            const chapters = parseCommentChapters(comment.content);
+            if (chapters.filter(({ seconds }) => seconds < duration).length < MIN_AUTOMATIC_CHAPTERS) continue;
+            highestBuffCount = buffCount;
+            selected = { commentId: String(id), chapters };
+        }
+        return selected;
+    }
+
     namespace.model = Object.freeze({
         COLLAPSED_COMMENT_MAX_CHARS,
         COMMENT_PAGE_SIZE,
@@ -376,6 +430,7 @@
         MAX_COMMENTS_PER_ORDER,
         MAX_REPLIES_PER_COMMENT,
         MAX_REPLIES_PER_ORDER,
+        MIN_AUTOMATIC_CHAPTERS,
         SORT_OPTIONS,
         applyCommentPage,
         collectReplyRows,
@@ -391,9 +446,11 @@
         normalizeCommentRowReplies,
         normalizeImageUrl,
         normalizeReplyRow,
+        parseCommentChapters,
         parseCommentDate,
         parseCommentPage,
         parseTimecodeSeconds: root.utils.parseTimecodeSeconds,
+        selectAutomaticChapterComment,
         validateCommentResponse,
     });
 })();

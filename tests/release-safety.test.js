@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const { tmpdir } = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
@@ -159,6 +160,17 @@ function assertBundledFile(relativePath, context, violations) {
         violations.push(`${context}: missing ${relativePath}`);
     }
 }
+
+test("release packaging excludes local diagnostic logs at every depth", async () => {
+    const { default: config } = await import("../web-ext-config.mjs");
+    const { cmd } = await import("web-ext");
+    const files = ["debug.log", "features/debug.log", "manifest.json", "THIRD_PARTY_NOTICES.md"];
+    const included = await cmd.build(
+        { ...config, sourceDir: repoRoot, artifactsDir: tmpdir() },
+        { packageCreator: ({ fileFilter }) => files.filter((file) => fileFilter.wantFile(file)) }
+    );
+    assert.deepEqual(included, ["manifest.json", "THIRD_PARTY_NOTICES.md"]);
+});
 
 test("runtime files must not contain remote-hosted executable code patterns", () => {
     const files = [...runtimeFiles, ...runtimeDirs.flatMap(collectJsFiles)];

@@ -145,6 +145,7 @@ function fixture(t, rows, { url = "/live/test-channel", options = {}, extra = ""
     };
     let parseCount = 0;
     let containerTextReads = 0;
+    let structureReadsInsideKnownRows = 0;
     for (const name of [
         "shared/settings.js",
         "shared/data.js",
@@ -166,6 +167,10 @@ function fixture(t, rows, { url = "/live/test-channel", options = {}, extra = ""
                 getVisibleText(node, context) {
                     if (native && node === native.list) containerTextReads++;
                     return parser.getVisibleText(node, context);
+                },
+                hasNativeMessageStructure(node) {
+                    if (node.closest("[data-chat-id]")) structureReadsInsideKnownRows++;
+                    return parser.hasNativeMessageStructure(node);
                 },
                 parseChatRow: (node) => {
                     parseCount++;
@@ -197,6 +202,9 @@ function fixture(t, rows, { url = "/live/test-channel", options = {}, extra = ""
         },
         get containerTextReads() {
             return containerTextReads;
+        },
+        get structureReadsInsideKnownRows() {
+            return structureReadsInsideKnownRows;
         },
     };
 }
@@ -327,6 +335,7 @@ test("all hidden backlog stops at available messages, and an edited filter and r
     );
     const calls = f.native.calls.length;
     assert.equal(f.containerTextReads, 0, "a known list container is excluded before reading all descendant text");
+    assert.equal(f.structureReadsInsideKnownRows, 0, "a recognized row needs no nickname/body fallback scan");
     f.native.request(40);
     f.native.request(40);
     assert.equal(f.native.calls.length, calls, "exhausted backlog does not reschedule a native update");

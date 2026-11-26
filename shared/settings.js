@@ -126,6 +126,7 @@
             max: LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
         },
         vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
+        vodCommentAutoChaptersEnabled: { kind: "bool", default: true, feature: true },
         vodCommentLayout: { kind: "choice", values: ["tabs", "split"], default: "tabs" },
         vodCommentSplitTop: { kind: "choice", values: ["chat", "comments"], default: "chat" },
         chatResizeEnabled: { kind: "bool", default: true, feature: true },

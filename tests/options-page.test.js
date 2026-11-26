@@ -30,7 +30,7 @@ test("nickname display saves independently and describes the verified streamer e
     assert.equal(chrome.testState.sync.chatDonationMessagesHidden, true);
 });
 
-test("VOD comment display controls save split mode and the upper pane without changing the master option", async (t) => {
+test("VOD comment controls save split mode and automatic chapters independently of the master option", async (t) => {
     const chrome = createFakeChrome({ sync: { vodCommentTabsEnabled: true } });
     const dom = createDom("options.html", "options.html", chrome);
     t.after(() => dom.window.close());
@@ -40,22 +40,28 @@ test("VOD comment display controls save split mode and the upper pane without ch
     const { document } = dom.window;
     const layout = queryOption(document, "vodCommentLayout");
     const top = queryOption(document, "vodCommentSplitTop");
+    const automaticChapters = queryOption(document, "vodCommentAutoChaptersEnabled");
     assert.equal(layout.value, "tabs");
     assert.equal(top.value, "chat");
+    assert.equal(automaticChapters.checked, true);
     layout.value = "split";
     top.value = "comments";
+    automaticChapters.checked = false;
     dispatch(dom, layout, "change");
     dispatch(dom, top, "change");
+    dispatch(dom, automaticChapters, "change");
     document.getElementById("save").click();
     await waitForCondition(() => document.getElementById("message").textContent === "옵션 저장 완료.");
     assert.equal(chrome.testState.sync.vodCommentLayout, "split");
     assert.equal(chrome.testState.sync.vodCommentSplitTop, "comments");
+    assert.equal(chrome.testState.sync.vodCommentAutoChaptersEnabled, false);
     assert.equal(queryOption(document, "vodCommentTabsEnabled").checked, true);
     const master = queryOption(document, "vodCommentTabsEnabled");
     master.checked = false;
     dispatch(dom, master, "change");
     assert.equal(layout.closest("[data-depends-on]").getAttribute("aria-disabled"), "true");
     assert.equal(top.closest("[data-depends-on]").getAttribute("aria-disabled"), "true");
+    assert.equal(automaticChapters.disabled, true);
 });
 
 test("last category restores every legacy index by meaning without rewriting the legacy value", async (t) => {

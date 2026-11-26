@@ -971,11 +971,12 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
         "features/vodComments/repository.js",
         "features/vodComments/nativeAdapter.js",
         "features/vodComments/view.js",
+        "features/vodComments/chapters.js",
     ];
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.8");
+    assert.equal(manifest.version, "1.4.9");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -7054,6 +7055,7 @@ function registerPlayerDisplayCleanup(t, dom) {
         }
     };
     t.after(() => {
+        dom.window.dispatchEvent(new dom.window.PageTransitionEvent("pagehide", { persisted: false }));
         for (const observer of observers) observer.disconnectAll ? observer.disconnectAll() : observer.disconnect();
         dom.window.close();
     });

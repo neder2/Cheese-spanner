@@ -478,30 +478,63 @@ test("adds an Akamai rewind by channel or URL with its signed playlist intact", 
     assert.deepEqual(f.main.seeks, []);
 });
 
+test("accepts verified PZP 1.17.4 players and rejects unverified SDK versions", async (t) => {
+    const f = fixture(t);
+    f.main.constructor.version = "1.17.4";
+    f.apply(true);
+    f.open();
+
+    const replay = rewindDetail(2, "https://light-slit.akamaized.net/chzzk/kr/live_rewind/c/fixture/vod_playlist.m3u8");
+    f.responses.set(2, replay);
+    f.add(2);
+    await flush();
+    assert.equal(f.players.length, 2);
+    const [slot] = f.w.CheeseSpannerVodNative.getAuxiliaries();
+    const sub = slot.player;
+    sub.loaded(60);
+    assert.deepEqual(sub.seeks, [10]);
+    sub.seeked();
+    await flush();
+    assert.match(f.status(), /맞췄습니다/);
+
+    f.remove();
+    assert.equal(await slot.idle, true);
+    assert.equal(sub._lastSrcObj, null);
+
+    f.main.constructor.version = "1.18.0";
+    f.add(3);
+    await flush();
+    assert.match(f.status(), /재생 형식을 지원하지/);
+    assert.equal(f.players.length, 2);
+});
+
 test("compares the precise rewind duration at the resolution of the catalogue's whole seconds", async (t) => {
     const f = fixture(t);
     const replay = rewindDetail(2);
-    replay.content.duration = 7730;
+    replay.content.duration = 39287;
     const playback = JSON.parse(replay.content.liveRewindPlaybackJson);
-    playback.meta.duration = 7727.931;
+    playback.meta.duration = 39281.633;
     replay.content.liveRewindPlaybackJson = JSON.stringify(playback);
     f.responses.set(2, replay);
     f.apply(true);
     f.open();
     f.add(2);
     await flush();
-    assert.equal(f.players.length, 2, "a two-second difference at catalogue precision is playable");
+    assert.equal(f.players.length, 2, "a rewind lagging behind the catalogue by one HLS segment is playable");
     const sub = f.players[1];
-    assert.equal(sub.srcObject.data.meta.duration, 7727.931, "the provider receives its original duration");
-    sub.loaded(7729.9);
+    assert.equal(sub.srcObject.data.meta.duration, 39281.633, "the provider receives its original duration");
+    sub.loaded(39285.714);
     sub.seeked();
     await flush();
     assert.match(f.status(), /맞췄습니다/);
 
     for (const reader of [f.w.CheeseSpannerVodRewind, f.w.CheeseSpannerVodNative]) {
         const read = (length) => reader.readRewindSource(replay.content.liveRewindPlaybackJson, "media_2", length);
-        assert.equal(read(7731), null, "three whole seconds still disagree");
-        assert.equal(read(7730.01), null, "a fractional catalogue value keeps its precision");
+        assert.ok(read(39292), "a ten-second shortfall at catalogue precision is still accepted");
+        assert.equal(read(39293), null, "an eleven-second shortfall still disagrees");
+        assert.equal(read(39291.64), null, "a fractional catalogue value keeps its precision");
+        assert.ok(read(39280), "a two-second overshoot at catalogue precision is still accepted");
+        assert.equal(read(39279), null, "a three-second overshoot still disagrees");
     }
 });
 
@@ -1337,7 +1370,7 @@ test("uses the live default slots at both widths and resets after docking into a
     assert.equal(layout.host.hasAttribute("data-bcvm-split"), false, "the main alone fills the native player again");
 });
 
-test("folding the empty bottom replay row keeps playback, fits the media and resets the default slots", async (t) => {
+test("folding the empty bottom replay row preserves the native frame and playback and resets the default slots", async (t) => {
     const f = fixture(t);
     const layout = layoutFixture(f);
     f.apply(true);
@@ -1354,10 +1387,10 @@ test("folding the empty bottom replay row keeps playback, fits the media and res
     assert.equal(rootDivider().getAttribute("aria-valuenow"), "67");
     layout.drag(rootDivider(), point(2 / 3), point(1));
     assert.equal(rootDivider().getAttribute("aria-orientation"), "vertical");
-    assert.equal(f.document.querySelectorAll(`${PANEL} .bcvm-divider:not([hidden])`).length, 1);
+    assert.equal(f.document.querySelectorAll(`${PANEL} .bcvm-divider:not([hidden])`).length, 2);
     assert.equal(layout.pane(1).style.height, "100%");
     assert.equal(layout.pane(2).style.height, "100%");
-    assert.ok(Math.abs(parseFloat(layout.host.style.getPropertyValue("--bcmv-packed-aspect")) - 8 / 3) < 1e-6);
+    assert.equal(layout.host.style.getPropertyValue("--bcmv-packed-aspect"), "");
     assert.deepEqual(
         f.players.map((player) => player.srcObject),
         sources
@@ -1366,8 +1399,15 @@ test("folding the empty bottom replay row keeps playback, fits the media and res
     f.byText("기본 배치").click();
     assert.equal(rootDivider().getAttribute("aria-valuenow"), "67");
     assert.equal(layout.host.hasAttribute("data-bcmv-packed"), false);
-    rootDivider().dispatchEvent(new f.w.KeyboardEvent("keydown", { key: "End", bubbles: true }));
-    assert.equal(layout.host.dataset.bcmvPacked, "host");
+    const end = new f.w.KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true });
+    assert.equal(rootDivider().dispatchEvent(end), true);
+    assert.equal(rootDivider().getAttribute("aria-valuenow"), "67");
+    for (let step = 0; step < 8; step++) {
+        rootDivider().dispatchEvent(new f.w.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    }
+    assert.equal(rootDivider().getAttribute("aria-valuenow"), rootDivider().getAttribute("aria-valuemax"));
+    assert.equal(rootDivider().getAttribute("aria-orientation"), "horizontal");
+    assert.equal(layout.host.hasAttribute("data-bcmv-packed"), false);
     f.byText("기본 배치").click();
     f.add(3);
     f.add(4);
@@ -1383,6 +1423,60 @@ test("folding the empty bottom replay row keeps playback, fits the media and res
     assert.equal(layout.host.hasAttribute("data-bcmv-packed"), false);
 });
 
+test("pulling the folded replay row grip tracks the pointer, cancels and keeps the same players", async (t) => {
+    const f = fixture(t);
+    const { host, pane, pointer, drag } = layoutFixture(f);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    host.getBoundingClientRect = () => new f.w.DOMRect(100, 30, 960, host.dataset.bcmvPacked ? 360 : 540);
+    const frame = host.getBoundingClientRect();
+    const gripY = frame.bottom - 4;
+    const halfway = gripY - frame.height / 2;
+    const root = f.document.querySelector('[data-bcvm-divider="r"]');
+    const grip = () => f.document.querySelector(`${PANEL} [aria-label="접힌 하단 줄 펼치기"]:not([hidden])`);
+    const key = (target, key) =>
+        target.dispatchEvent(new f.w.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    const at = (y) => ({ clientX: 580, clientY: y });
+    const move = (y) => pointer(f.document.body, "pointermove", at(y));
+    const sources = f.players.map((player) => player.srcObject);
+    const requests = f.requests.length;
+    drag(root, at(frame.top + frame.height * (2 / 3)), at(frame.bottom));
+    assert.ok(grip());
+    assert.equal(grip().tabIndex, -1);
+    grip().focus();
+    assert.equal(f.document.activeElement, root);
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    pointer(grip(), "pointerdown", at(gripY));
+    move(gripY + 13);
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    move(halfway);
+    assert.equal(root.getAttribute("aria-valuenow"), "50");
+    move(gripY);
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    move(halfway);
+    pointer(f.document.body, "pointercancel", at(halfway));
+    assert.notEqual(f.document.activeElement, grip());
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    pointer(grip(), "pointerdown", at(gripY));
+    pointer(f.document.body, "pointerup", at(halfway));
+    assert.equal(pane(1).style.height, "50%");
+    assert.equal(pane(2).style.height, "50%");
+    assert.equal(grip(), null);
+    assert.equal(f.document.activeElement, root);
+    drag(root, at(halfway + 4), at(frame.bottom));
+    assert.equal(key(grip(), "ArrowUp"), true, "the grip leaves the arrow key available to the page");
+    assert.equal(root.getAttribute("aria-orientation"), "vertical");
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    assert.deepEqual(
+        f.players.map((player) => player.srcObject),
+        sources
+    );
+    assert.equal(f.main.video.currentTime, 40);
+    assert.equal(f.requests.length, requests);
+});
+
 test("dragging the native replay to the folded bottom edge opens three targets and leaves playback in place", async (t) => {
     const f = fixture(t);
     const layout = layoutFixture(f);
@@ -1395,15 +1489,17 @@ test("dragging the native replay to the folded bottom edge opens three targets a
     const point = (x, y) => ({ clientX: 100 + x, clientY: 30 + y });
     const preview = f.document.querySelector(`${PANEL} .bcvm-drop-preview`);
     const root = f.document.querySelector('[data-bcvm-divider="r"]');
-    root.dispatchEvent(new f.w.KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    layout.drag(root, point(580, 360), point(580, 540));
     const packed = layout.rect(1);
+    assert.equal(host.getBoundingClientRect().height, 540);
+    const height = host.getBoundingClientRect().height;
     const sources = f.players.map((player) => player.srcObject);
     const start = () => pointer(f.main.video, "pointerdown", layout.center(1));
     const move = (x, y) => pointer(f.document.body, "pointermove", point(x, y));
     start();
     move(240, 220);
     assert.equal(preview.hidden, true, "a drag inside the same replay leaves the row folded");
-    move(160, 359);
+    move(160, height - 1);
     assert.equal(preview.hidden, false);
     assert.equal(preview.textContent, "하단에 배치");
     assert.equal(host.getBoundingClientRect().height, 540);
@@ -1413,12 +1509,12 @@ test("dragging the native replay to the folded bottom edge opens three targets a
     assert.deepEqual(layout.rect(1), packed);
 
     start();
-    move(160, 359);
+    move(160, height - 1);
     move(480, 460);
     move(160, 150);
     assert.equal(preview.hidden, true);
     assert.deepEqual(layout.rect(1), packed);
-    move(800, 362);
+    move(800, height + 2);
     pointer(f.document.body, "pointerup", point(480, 495));
     assert.equal(root.getAttribute("aria-orientation"), "horizontal");
     assert.ok(Math.abs(parseFloat(pane(1).style.left) - 100 / 3) < 1e-6);

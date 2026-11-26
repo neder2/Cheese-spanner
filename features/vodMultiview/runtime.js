@@ -14,6 +14,7 @@
     } = CheeseSpanner.utils;
     const { loadVideo, videoNoFromUrl, searchChannels, loadFollowing, findReplay } = CheeseSpanner.vodMultiviewMetadata;
     const model = CheeseSpanner.multiviewModel;
+    const layoutView = CheeseSpanner.multiviewView;
     const maxAuxiliary = model.MAX_VIEWS - 1;
     const maxRememberedMainVideos = 12;
     const timelinePointWidth = 44;
@@ -75,7 +76,8 @@
         ensureUiTheme?.();
         injectStyleOnce(
             "cheese-spanner-vod-multiview-style",
-            `${CheeseSpanner.multiviewView.packedFrameCss}
+            `
+#player_layout[data-bcvm-split]:not([data-bcvm-viewport], .pip_mode, .miniplayer) { background-color:var(--bct-viewer-bg); }
 #player_layout[data-bcvm-split]:not(.pip_mode, .miniplayer) > .pzp-pc:not(:fullscreen) {
     position:absolute; inset:var(--bcvm-top) auto auto var(--bcvm-left);
     width:var(--bcvm-width) !important; max-width:var(--bcvm-width); height:var(--bcvm-height) !important;
@@ -358,6 +360,7 @@
 #${PANEL_ID} .bcvm-divider:is(:hover, :focus-visible, [data-dragging])::before { background:var(--bct-brand); }
 #${PANEL_ID} .bcvm-divider[aria-orientation="horizontal"] { height:12px; transform:translateY(-50%); cursor:row-resize; }
 #${PANEL_ID} .bcvm-divider[aria-orientation="horizontal"]::before { inset:5px 0; }
+${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom"]`)}
 #${PANEL_ID} .bcvm-screen:not([data-bcvm-sync="false"]) :is(.pzp-pc__progress-slider, .pzp-setting-intro-playbackrate, .pzp-pc__setting-playbackrate-pane) {
     display: none !important;
 }
@@ -1553,13 +1556,7 @@
         host.toggleAttribute("data-bcvm-split", active);
         host.toggleAttribute("data-bcvm-motion", active && !viewport && !suspended && !current.drag?.handle);
         if (!viewport) host.style.removeProperty("--bcvm-main-layer");
-        current.layout = model.treeLayout(current.drag?.previewTree || current.tree);
-        if (!current.drag)
-            current.fitFrame(
-                !viewport && !suspended && current.customLayout && current.tree?.axis === "columns"
-                    ? current.layout.cells
-                    : null
-            );
+        current.layout = model.splitLayout(current.drag?.previewTree || current.tree);
         current.cells = viewport ? freeCells(current, current.layout.cells) : current.layout.cells;
         if (!current.drag) syncPanelOrder(current);
         if (!active) {
@@ -1587,20 +1584,8 @@
         const visibleDividers = new Set(handles.map(({ key }) => key));
         for (const [key, divider] of current.dividers) divider.toggleAttribute("hidden", !visibleDividers.has(key));
         for (const handle of handles) {
-            const { key, axis, value, position, start, length, lower, upper, collapseBelow } = handle;
-            const divider = current.dividers.get(key) || bindDivider(current, key);
-            const vertical = axis === "columns";
-            Object.assign(divider.style, {
-                left: percent(vertical ? position : start),
-                top: percent(vertical ? start : position),
-                width: vertical ? "" : percent(length),
-                height: vertical ? percent(length) : "",
-            });
-            divider.setAttribute("aria-orientation", vertical ? "vertical" : "horizontal");
-            divider.setAttribute("aria-valuemin", String(Math.round(lower * 100)));
-            divider.setAttribute("aria-valuemax", String(collapseBelow ? 100 : Math.round(upper * 100)));
-            divider.title = collapseBelow ? "아래 끝까지 끌거나 End 키를 누르면 빈 하단 영역 접기" : "";
-            divider.setAttribute("aria-valuenow", String(Math.round(value * 100)));
+            const divider = current.dividers.get(handle.key) || bindDivider(current, handle.key);
+            layoutView.drawDivider(divider, handle);
         }
         const drop = current.drag?.drop;
         current.preview.hidden = !drop;
@@ -1611,12 +1596,15 @@
     }
 
     function bindDivider(current, key) {
-        const divider = button("");
+        const divider = key === "bottom" ? element("div") : button("");
         divider.className = "bcvm-divider";
         divider.dataset.bcvmDivider = key;
         divider.setAttribute("role", "separator");
-        divider.setAttribute("aria-label", "영상 크기 조절");
         const getHandle = () => current.layout.handles.find((item) => item.key === key);
+        divider.addEventListener("dblclick", () => resizeDivider(current, getHandle(), 0.5));
+        current.dividers.set(key, divider);
+        current.panel.append(divider);
+        if (key === "bottom") return divider;
         divider.addEventListener("keydown", (event) => {
             const handle = getHandle();
             if (!handle || divider.hidden) return;
@@ -1628,16 +1616,11 @@
                       ? handle.value + 0.05
                       : event.key === "Home"
                         ? 0.5
-                        : event.key === "End" && handle.collapseBelow
-                          ? 1
-                          : NaN;
+                        : NaN;
             if (!Number.isFinite(next)) return;
             event.preventDefault();
-            resizeDivider(current, handle, next);
+            resizeDivider(current, handle, Math.min(next, handle.upper));
         });
-        divider.addEventListener("dblclick", () => resizeDivider(current, getHandle(), 0.5));
-        current.dividers.set(key, divider);
-        current.panel.append(divider);
         return divider;
     }
 
@@ -1657,7 +1640,15 @@
     }
 
     function findDrop(drag, x, y) {
-        const row = model.bottomRowDrop(drag.tree, drag.cells, drag.tile.id, drag.bounds, drag.openRowBounds, x, y);
+        const row = model.bottomRowDrop(
+            drag.tree,
+            drag.cells,
+            drag.tile.id,
+            drag.bounds,
+            drag.drop?.side === "bottom-row",
+            x,
+            y
+        );
         if (row) return { ...row, label: "하단에 배치" };
         const px = (x - drag.bounds.left) / drag.bounds.width;
         const py = (y - drag.bounds.top) / drag.bounds.height;
@@ -1761,7 +1752,7 @@
         }
         if (current.drag?.control) {
             event.preventDefault();
-            current.drag.control.focus({ preventScroll: true });
+            if (handle?.key !== "bottom") current.drag.control.focus({ preventScroll: true });
         }
         if (current.drag?.started) current.drag.control.setAttribute("data-dragging", "");
     }
@@ -1795,7 +1786,6 @@
             const drop = findDrop(drag, event.clientX, event.clientY);
             if (started && drop?.path === drag.drop?.path && drop?.side === drag.drop?.side) return;
             drag.drop = drop;
-            CheeseSpanner.multiviewView.previewBottomRow(drag, drop, current.fitFrame, current.host);
             drag.previewTree = drop
                 ? drop.tree || dockTile(current, drag.tree, drag.tile.id, drop.id, drop.side, drop.path)
                 : null;
@@ -1970,15 +1960,6 @@
             listeners: new AbortController(),
         };
         const { signal } = current.listeners;
-        current.fitFrame = CheeseSpanner.multiviewView.createFrameFitter(host, host, (id) => {
-            const player = id === current.mainId ? current.root : current.entries.get(id)?.screen;
-            return player?.querySelector("video.webplayer-internal-video");
-        });
-        const videoSizeChanged = (event) => {
-            if (current.customLayout && event.target.matches?.("video.webplayer-internal-video")) drawLayout(current);
-        };
-        for (const type of ["loadedmetadata", "resize"])
-            host.addEventListener(type, videoSizeChanged, { capture: true, signal });
         const panel = (current.panel = element("section"));
         panel.id = PANEL_ID;
         panel.dataset.bcvm = "1";
@@ -2242,8 +2223,7 @@
             { signal }
         );
         const resized = () => {
-            if (current.viewport || (current.drag && !CheeseSpanner.multiviewView.isPreviewResize(current.drag, host)))
-                displayModeChanged();
+            if (current.viewport || current.drag) displayModeChanged();
             positionToolbar(current);
         };
         if (typeof ResizeObserver === "function") {

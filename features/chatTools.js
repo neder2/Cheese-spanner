@@ -634,29 +634,37 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         );
     }
 
-    function normalizeCandidateRow(el, rootEl) {
-        if (el.closest(NATIVE_FIXED_CHAT_SELECTOR)) return null;
-        let identityRow = null;
-        let structuralRow = null;
-        let weakRow = el;
-        let current = el;
-        for (let depth = 0; current && current !== rootEl && depth < 8; depth += 1, current = current.parentElement) {
-            if (!(current instanceof Element)) break;
-            if (hasExplicitChatRowIdentity(current)) {
-                identityRow = current;
-            }
+    function createRowDiscoveryContext() {
+        // Only the current synchronous search shares text and visibility. A recycled row is read again.
+        return { visibleTextCache: new WeakMap(), hiddenCache: new WeakMap() };
+    }
 
-            const classText = getClassText(current);
-            if (/(^|[\s_-])(row|item)(?=$|[\s_-])/i.test(classText) && getVisibleText(current)) {
-                structuralRow = current;
-                continue;
-            }
-            if (/(^|[\s_-])(message|chat|comment)(?=$|[\s_-])/i.test(classText) && getVisibleText(current)) {
-                weakRow = current;
-            }
-            if (hasNativeMessageStructure(current)) weakRow = current;
+    function normalizeCandidateRow(el, rootEl, context) {
+        if (el.closest(NATIVE_FIXED_CHAT_SELECTOR)) return null;
+        const ancestors = [];
+        for (
+            let node = el;
+            node instanceof Element && node !== rootEl && ancestors.length < 8;
+            node = node.parentElement
+        ) {
+            ancestors.push(node);
         }
-        return structuralRow || identityRow || weakRow;
+        // Prefer the outermost visible row, then the outermost explicit identity. Only an
+        // unrecognized chain needs the message text or native nickname/body fallback.
+        ancestors.reverse();
+        return (
+            ancestors.find(
+                (node) => /(^|[\s_-])(row|item)(?=$|[\s_-])/i.test(getClassText(node)) && getVisibleText(node, context)
+            ) ||
+            ancestors.find(hasExplicitChatRowIdentity) ||
+            ancestors.find(
+                (node) =>
+                    (/(^|[\s_-])(message|chat|comment)(?=$|[\s_-])/i.test(getClassText(node)) &&
+                        getVisibleText(node, context)) ||
+                    hasNativeMessageStructure(node)
+            ) ||
+            el
+        );
     }
 
     function hasCandidateAncestor(row, candidateRows, rootEl) {
@@ -742,6 +750,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 
         const rows = new Set();
         const pending = [el];
+        const context = createRowDiscoveryContext();
         let visited = 0;
         while (pending.length > 0) {
             const current = pending.pop();
@@ -751,7 +760,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             if (visited > MAX_MUTATION_SUBTREE_ELEMENTS) return { rows: [], overflow: true };
 
             if (current.matches(CHAT_ROW_SELECTORS)) {
-                const row = normalizeCandidateRow(current, rootEl);
+                const row = normalizeCandidateRow(current, rootEl, context);
                 if (row instanceof HTMLElement && row !== rootEl && !isOwnUi(row)) rows.add(row);
             }
 
@@ -953,23 +962,24 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (!(rootEl instanceof Element)) return [];
 
         const rows = new Set();
+        const context = createRowDiscoveryContext();
         for (const child of Array.from(rootEl.children)) {
             if (isOwnUi(child)) continue;
             if (child.closest(NATIVE_FIXED_CHAT_SELECTOR)) continue;
             if (child.querySelector(CHAT_ROW_SELECTORS)) continue;
             // A list wrapper is not a message; avoid walking all hidden descendants just to discard it.
-            if (!getVisibleText(child)) continue;
+            if (!getVisibleText(child, context)) continue;
             rows.add(child);
         }
 
         for (const el of Array.from(rootEl.querySelectorAll(CHAT_ROW_SELECTORS))) {
             if (el === rootEl || isOwnUi(el)) continue;
-            rows.add(normalizeCandidateRow(el, rootEl));
+            rows.add(normalizeCandidateRow(el, rootEl, context));
         }
 
         // Recognized rows are parsed below. Only weak candidates need a preliminary visible-text check.
         return filterNestedCandidateRows(rows, rootEl).filter(
-            (row) => hasChatRowSignal(row) || Boolean(getVisibleText(row))
+            (row) => hasChatRowSignal(row) || Boolean(getVisibleText(row, context))
         );
     }
 

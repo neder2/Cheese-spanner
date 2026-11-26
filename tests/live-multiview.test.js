@@ -3539,7 +3539,7 @@ test("dragging the empty lower divider to the bottom collapses it, can be cancel
                 clientY: y,
             })
         );
-    assert.equal(rootDivider().getAttribute("aria-valuemax"), "100");
+    assert.equal(rootDivider().getAttribute("aria-valuemax"), "94");
     pointer(rootDivider(), "pointerdown", 360);
     pointer(h.w, "pointermove", 539);
     assert.equal(rootDivider().dataset.axis, "columns");
@@ -3555,18 +3555,83 @@ test("dragging the empty lower divider to the bottom collapses it, can be cancel
     assert.equal(folded.dockTree.axis, "columns");
     assert.equal(folded.dockTree.a, A);
     assert.equal(folded.dockTree.b, B);
-    assert.equal(grid.querySelectorAll(".bcmv-separator").length, 1);
-    assert.equal(host.dataset.bcmvPacked, "host");
+    assert.equal(grid.querySelectorAll(".bcmv-separator").length, 2);
+    assert.equal(host.hasAttribute("data-bcmv-packed"), false, "folding keeps the native frame in charge of sizing");
+    assert.equal(host.style.getPropertyValue("--bcmv-packed-aspect"), "");
     assert.equal(d.querySelector(`[data-bcmv-channel="${B}"] video`), video);
     const restored = setup(t, { savedSession: folded });
     await tick();
-    assert.equal(restored.w.document.querySelectorAll(".bcmv-separator").length, 1);
+    assert.equal(restored.w.document.querySelectorAll(".bcmv-separator").length, 2);
     h.click("controls");
     h.click("reset-layout");
     assert.deepEqual(saved().dockTree, initial);
     assert.equal(host.hasAttribute("data-bcmv-packed"), false);
-    rootDivider().dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "End", bubbles: true }));
-    assert.deepEqual(saved().dockTree, folded.dockTree);
+    const end = new h.w.KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true });
+    assert.equal(rootDivider().dispatchEvent(end), true);
+    assert.deepEqual(saved().dockTree, initial);
+});
+
+test("pulling the folded live row grip opens empty slots at the pointer and preserves the upper layout", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B, { keepPanelOpen: true });
+    const d = h.w.document;
+    const host = d.querySelector("[data-bcmv-host]");
+    const grid = d.querySelector(".bcmv-grid");
+    grid.getBoundingClientRect = host.getBoundingClientRect = () =>
+        new h.w.DOMRect(100, 30, 960, host.dataset.bcmvPacked ? 360 : 540);
+    const frame = host.getBoundingClientRect();
+    const gripY = frame.bottom - 4;
+    const halfway = gripY - frame.height / 2;
+    const divider = () => grid.querySelector('[data-path="r"]');
+    const grip = () => grid.querySelector('[aria-label="접힌 하단 줄 펼치기"]');
+    const session = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+    const key = (target, key) =>
+        target.dispatchEvent(new h.w.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    const pointer = (target, type, y) =>
+        target.dispatchEvent(new h.w.MouseEvent(type, { bubbles: true, cancelable: true, clientX: 580, clientY: y }));
+    const fold = (y) => {
+        pointer(divider(), "pointerdown", y);
+        pointer(h.w, "pointerup", frame.bottom);
+    };
+    const video = grid.querySelector(`[data-bcmv-channel="${B}"] video`);
+    const requests = h.requests.length;
+
+    fold(frame.top + frame.height * (2 / 3));
+    const folded = session().dockTree;
+    assert.ok(grip());
+    assert.equal(grip().tabIndex, -1);
+    grip().focus();
+    assert.equal(d.activeElement, divider());
+    assert.equal(grip().getAttribute("aria-orientation"), "horizontal");
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    pointer(grip(), "pointerdown", gripY);
+    pointer(h.w, "pointerup", gripY);
+    assert.deepEqual(session().dockTree, folded);
+    pointer(grip(), "pointerdown", gripY);
+    pointer(h.w, "pointermove", halfway);
+    assert.equal(divider().getAttribute("aria-valuenow"), "50");
+    assert.deepEqual(session().dockTree, folded);
+    key(d.activeElement, "Escape");
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    assert.notEqual(d.activeElement, grip());
+
+    pointer(grip(), "pointerdown", gripY);
+    pointer(h.w, "pointerup", halfway);
+    const opened = session();
+    assert.equal(opened.dockTree.ratio, 0.5);
+    assert.deepEqual(opened.dockTree.a, folded);
+    assert.equal(h.w.CheeseSpanner.multiviewModel.treeLayout(opened.dockTree.b).cells.filter((c) => !c.id).length, 3);
+    const restored = setup(t, { savedSession: opened });
+    await tick();
+    assert.equal(restored.w.document.querySelector('.bcmv-grid [data-path="r"]').getAttribute("aria-valuenow"), "50");
+
+    fold(halfway + 4);
+    assert.equal(key(grip(), "ArrowUp"), true, "the grip leaves the arrow key available to the page");
+    assert.deepEqual(session().dockTree, folded);
+    assert.equal(host.getBoundingClientRect().height, frame.height);
+    assert.equal(grid.querySelector(`[data-bcmv-channel="${B}"] video`), video);
+    assert.equal(h.requests.length, requests);
 });
 
 test("dragging a live video against its own folded bottom edge reopens the row and commits only the chosen slot", async (t) => {
@@ -3587,6 +3652,8 @@ test("dragging a live video against its own folded bottom edge reopens the row a
     const grid = d.querySelector(".bcmv-grid");
     grid.getBoundingClientRect = host.getBoundingClientRect = () =>
         new h.w.DOMRect(0, 0, 960, host.dataset.bcmvPacked ? 360 : 540);
+    assert.equal(host.getBoundingClientRect().height, 540, "a restored folded layout uses the full native frame");
+    const bottom = host.getBoundingClientRect().bottom;
     const video = grid.querySelector(`[data-bcmv-channel="${B}"] video`);
     const divider = () => grid.querySelector('[data-path="r"]');
     const guide = () => grid.querySelector(".bcmv-drop-preview");
@@ -3598,7 +3665,7 @@ test("dragging a live video against its own folded bottom edge reopens the row a
     const start = () => pointer(video, "pointerdown", 800, 180);
     const move = (x, y) => pointer(h.w, "pointermove", x, y);
     start();
-    move(800, 364);
+    move(800, bottom + 4);
     assert.equal(guide().textContent, "하단에 배치");
     assert.equal(host.getBoundingClientRect().height, 540);
     move(160, 495);
@@ -3606,8 +3673,8 @@ test("dragging a live video against its own folded bottom edge reopens the row a
     assert.deepEqual(savedTree(), packed);
     move(800, 180);
     assert.equal(guide().hidden, true);
-    assert.equal(host.getBoundingClientRect().height, 360);
-    move(480, 358);
+    assert.equal(host.getBoundingClientRect().height, 540);
+    move(480, bottom - 2);
     h.w.dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     assert.equal(guide(), null);
     assert.deepEqual(savedTree(), packed);
@@ -3615,7 +3682,7 @@ test("dragging a live video against its own folded bottom edge reopens the row a
 
     const requests = h.requests.length;
     start();
-    move(800, 359);
+    move(800, bottom - 1);
     pointer(h.w, "pointerup", 480, 510);
     const result = savedTree();
     assert.equal(result.axis, "rows");
@@ -3645,6 +3712,32 @@ test("a bottom-edge fold keeps occupied lower regions and only edits the selecte
     assert.equal(changed.a.a, A);
     assert.equal(changed.b, two.b);
     assert.equal(changed.ratio, two.ratio);
+});
+
+test("the bottom grip appears only when the layout has no open bottom row", (t) => {
+    const m = setup(t).w.CheeseSpanner.multiviewModel;
+    const channels = [A, B, C, "d".repeat(32), "e".repeat(32), "f".repeat(32)].map((id) => ({ id }));
+    const full = m.defaultTree(channels);
+    const grip = (tree) => m.splitLayout(tree).handles.find((item) => item.key === "bottom");
+    assert.equal(grip(full), undefined);
+    const stacked = { axis: "rows", ratio: 0.4, a: A, b: B };
+    assert.equal(grip(stacked), undefined, "an unmarked saved stack already has a lower row");
+    const sideBySide = { axis: "columns", ratio: 0.6, a: A, b: B };
+    const withLowerRow = m.resizeSplit(sideBySide, grip(sideBySide), 0.55);
+    assert.equal(grip(withLowerRow), undefined);
+    const filled = channels.slice(2, 5).reduce((tree, { id }) => m.addTree(tree, id, A), withLowerRow);
+    assert.ok(m.treeLayout(filled).cells.every(({ id }) => id));
+    assert.equal(grip(filled), undefined, "filling all three lower slots keeps the row open");
+    const withEmptyRow = { axis: "rows", ratio: 0.7, a: full, b: null };
+    const folded = m.resizeSplit(withEmptyRow, m.splitLayout(withEmptyRow).handles[0], 1);
+    const restored = m.session({ version: 1, layoutVersion: 3, customLayout: true, channels, dockTree: folded });
+    const handle = grip(restored.dockTree);
+    assert.ok(handle);
+    const opened = m.resizeSplit(restored.dockTree, handle, 0.55);
+    assert.equal(m.validTree(opened, channels), true);
+    assert.deepEqual(m.treeLayout(opened.a).cells, m.treeLayout(full).cells);
+    assert.equal(m.treeLayout(opened.b).cells.length, 3);
+    assert.equal(grip(opened), undefined);
 });
 
 test("main keeps its four-cell size and user resizing survives stream additions and removals", async (t) => {

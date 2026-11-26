@@ -157,6 +157,15 @@
     function bottomRow([x1, x2], left = null, middle = null, right = null) {
         return branch("columns", x2, branch("columns", x1 / x2, left, middle), right);
     }
+    function withBottomRow(upper, ratio = DEFAULT_SPLITS[1]) {
+        return branch("rows", ratio, upper, bottomRow(DEFAULT_SPLITS));
+    }
+    function canOpenBottomRow(tree, cells) {
+        return (
+            (tree?.axis === "columns" || (tree?.axis === "rows" && tree.bottomRowFolded === true)) &&
+            cells.every((cell) => cell.id)
+        );
+    }
     function defaultTree(channels, columns = DEFAULT_SPLITS, rows = DEFAULT_SPLITS) {
         const ids = channels.map((entry) => entry.id);
         if (ids.length < 2) return ids[0] || null;
@@ -229,6 +238,14 @@
         visit(tree, [0, 0, 1, 1], "r");
         return { cells, handles };
     }
+    function splitLayout(tree) {
+        const layout = treeLayout(tree);
+        if (canOpenBottomRow(tree, layout.cells)) {
+            const [divider] = treeLayout(withBottomRow(tree)).handles;
+            layout.handles.push({ ...divider, key: "bottom", value: 1, position: 1 });
+        }
+        return layout;
+    }
     function orderedCells(cells, mainId) {
         // Round shared row boundaries before comparing horizontal positions.
         return cells
@@ -264,30 +281,31 @@
         return typeof tree === "string" || Boolean(tree && (hasVideo(tree.a) || hasVideo(tree.b)));
     }
     function resizeSplit(tree, handle, value) {
+        const ratio = Math.min(handle.upper, Math.max(handle.lower, value));
+        if (handle.key === "bottom") return value >= 1 ? tree : withBottomRow(tree, ratio);
         if (handle.collapseBelow && value >= 1) {
             let group = tree;
             for (const side of handle.key.slice(1)) group = group[side];
             // Promote the occupied layout. No hidden videos or zero-height cells enter the saved tree.
-            return replaceTree(tree, handle.key, removeTree(group.a, null));
+            const upper = removeTree(group.a, null);
+            // A full-width row above the fold can itself contain stacked videos.
+            if (handle.key === "r" && upper?.axis === "rows") return { ...upper, bottomRowFolded: true };
+            return replaceTree(tree, handle.key, upper);
         }
-        return resizeTree(tree, handle.key, Math.min(handle.upper, Math.max(handle.lower, value)));
+        return resizeTree(tree, handle.key, ratio);
     }
-    function bottomRowDrop(tree, cells, source, bounds, openBounds, x, y) {
-        if (tree?.axis !== "columns" || !bounds.width || !bounds.height || cells.some((cell) => !cell.id)) return null;
+    function bottomRowDrop(tree, cells, source, bounds, rowOpen, x, y) {
+        if (!canOpenBottomRow(tree, cells) || !bounds.width || !bounds.height) return null;
         const px = (x - bounds.left) / bounds.width;
         const bottom = bounds.top + bounds.height;
         const margin = Math.min(24, bounds.height * 0.08);
-        const rowTop = DEFAULT_SPLITS[1];
-        // Keep the original edge reachable as the player grows under the pointer.
-        const top = openBounds
-            ? Math.min(bottom - margin, openBounds.top + openBounds.height * rowTop)
-            : bottom - margin;
-        const end = openBounds ? Math.max(bottom, openBounds.top + openBounds.height) : bottom;
-        if (px < 0 || px > 1 || y < top || y > end + margin) return null;
+        // Enter at the bottom edge, then let the pointer move anywhere in the three exposed slots.
+        const top = rowOpen ? bounds.top + bounds.height * DEFAULT_SPLITS[1] : bottom - margin;
+        if (px < 0 || px > 1 || y < top || y > bottom + margin) return null;
         const [left, middle] = DEFAULT_SPLITS;
         const path = px < left ? "rbaa" : px < middle ? "rbab" : "rbb";
         const upper = mapTree(tree, (id) => (id === source ? null : id));
-        const expanded = branch("rows", rowTop, upper, bottomRow(DEFAULT_SPLITS));
+        const expanded = withBottomRow(upper);
         return { id: null, side: "bottom-row", path, tree: replaceTree(expanded, path, source) };
     }
     function replaceTree(tree, path, replacement) {
@@ -389,6 +407,7 @@
     function snapRatio(handle, raw, pixels, locked, origin) {
         const value = Math.min(handle.upper, Math.max(handle.lower, raw));
         if (!(pixels > 0) || !Number.isFinite(value)) return { value: handle.value, locked: null };
+        if (handle.key === "bottom" && raw >= 1 - 8 / pixels) return { value: 1, locked: null };
         if (handle.collapseBelow && raw >= 1 - Math.min(0.02, 8 / pixels)) return { value: 1, locked: 1 };
         if (locked !== null && locked !== 1 && Math.abs(value - locked) * pixels <= 14)
             return { value: locked, locked };
@@ -508,6 +527,7 @@
         defaultTree,
         validTree,
         treeLayout,
+        splitLayout,
         orderedCells,
         layout,
         freeLayout,

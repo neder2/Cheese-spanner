@@ -360,7 +360,8 @@ test("reopening starts at the oldest unread message and keeps that divider in pl
     trigger.click();
     const divider = list.querySelector('[role="separator"]');
     assert.ok(divider);
-    assert.equal(divider.getAttribute("aria-label"), "여기부터 새 메시지");
+    assert.equal(divider.textContent, "새 메시지");
+    assert.equal(divider.getAttribute("aria-label"), "새 메시지");
     assert.equal(divider.nextElementSibling, moderatorRows(document)[1]);
     assert.equal(divider.getBoundingClientRect().top, list.getBoundingClientRect().top);
     await waitForCondition(() => unreadCount(document) === 1);

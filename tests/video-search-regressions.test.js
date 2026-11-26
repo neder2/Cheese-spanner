@@ -815,3 +815,44 @@ test("comment matches open all cached bodies with ordinary links to in-range tim
     typeQuery(dom, "없음");
     assert.equal(tip.hasAttribute("data-show"), false);
 });
+
+test("late comment results preserve keyboard focus on the same timestamp occurrence", async () => {
+    const chrome = createFakeChrome({ sync: { videoSearchCommentDelayMs: 0, videoSearchMaxPages: 1 } });
+    const dom = createVideoSearchPage(chrome);
+    const { document, KeyboardEvent } = dom.window;
+    let release;
+    const lastResponse = new Promise((resolve) => {
+        release = resolve;
+    });
+    dom.window.fetch = async (url) => {
+        if (String(url).includes("/videos?")) {
+            const data = [100, 101, 102, 103].map((videoNo) => ({
+                videoNo,
+                videoTitle: `Existing ${videoNo}`,
+                duration: 600,
+            }));
+            return jsonResponse({ content: { data, last: true } });
+        }
+        if (String(url).includes("/id/103/")) await lastResponse;
+        const data = ["01:24 첫 장면", "01:24 다시 볼 장면"].map((content) => ({ comment: { content } }));
+        return jsonResponse({ content: { comments: { data } } });
+    };
+    await loadPage(dom);
+    typeQuery(dom, "장면");
+    const icons = () => document.querySelectorAll("[data-bcvs-comment-icon]");
+    await waitForCondition(() => icons().length === 3);
+    icons()[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const tip = document.querySelector("[data-bcvs-comment-tooltip]");
+    const secondLink = () => tip.querySelectorAll("a")[1];
+    secondLink().focus();
+    tip.scrollTop = 17;
+
+    release();
+    await waitForCondition(() => icons().length === 4);
+    assert.equal(document.activeElement, secondLink());
+    assert.equal(document.activeElement.getAttribute("href"), "/video/100?currentTime=84");
+    assert.equal(tip.scrollTop, 17);
+    document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(document.activeElement, icons()[0]);
+    assert.equal(tip.hasAttribute("data-show"), false);
+});

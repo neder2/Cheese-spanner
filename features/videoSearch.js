@@ -965,9 +965,19 @@
 
     function getOpenCommentTooltipState() {
         if (!activeCommentTooltipIcon || commentTooltip?.getAttribute("data-show") !== "1") return null;
+        const focused = document.activeElement;
+        const item =
+            focused instanceof HTMLAnchorElement && commentTooltip.contains(focused) ? focused.closest("li") : null;
         return {
             videoNo: activeCommentTooltipIcon.getAttribute(COMMENT_VIDEO_ATTR) || "",
             query: activeCommentTooltipIcon.__bcvsCommentQuery || currentQuery,
+            scrollTop: commentTooltip.scrollTop,
+            iconFocused: focused === activeCommentTooltipIcon,
+            focusedLink: item && {
+                comment: item.textContent,
+                index: Array.from(item.querySelectorAll("a")).indexOf(focused),
+                href: focused.getAttribute("href"),
+            },
         };
     }
 
@@ -1111,7 +1121,7 @@
         tooltip.scrollTop = Math.max(0, targetTop);
     }
 
-    function showCommentTooltip(anchor, text, query) {
+    function showCommentTooltip(anchor, text, query, scrollTop = null) {
         if (!text?.length) {
             hideCommentTooltip();
             return;
@@ -1128,7 +1138,8 @@
         anchor.setAttribute("data-active", "1");
         anchor.setAttribute("aria-expanded", "true");
         positionCommentTooltip(anchor);
-        scrollCommentTooltipToHit(tooltip);
+        if (scrollTop === null) scrollCommentTooltipToHit(tooltip);
+        else tooltip.scrollTop = scrollTop;
     }
 
     function restoreCommentTooltipState(state) {
@@ -1147,7 +1158,17 @@
             hideCommentTooltip();
             return;
         }
-        showCommentTooltip(icon, icon.__bcvsReadCommentTexts(), icon.__bcvsCommentQuery || state.query || currentQuery);
+        showCommentTooltip(icon, icon.__bcvsReadCommentTexts(), state.query, state.scrollTop);
+        if (state.focusedLink) {
+            const { comment, index, href } = state.focusedLink;
+            const item = Array.from(commentTooltip.querySelectorAll("li")).find((row) => row.textContent === comment);
+            const link = item?.querySelectorAll("a")[index];
+            (activeCommentTooltipIcon === icon && link?.getAttribute("href") === href ? link : icon).focus({
+                preventScroll: true,
+            });
+        } else if (state.iconFocused) {
+            icon.focus({ preventScroll: true });
+        }
     }
 
     function toggleCommentTooltip(anchor, text, query) {

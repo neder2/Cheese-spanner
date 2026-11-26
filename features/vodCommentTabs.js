@@ -3,8 +3,8 @@
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
  * 의존: CheeseSpannerSettings, CheeseSpanner.utils, CheeseSpanner.vodComments의 model/repository/
- *   nativeAdapter/view 모듈.
- * 옵션 키: vodCommentTabsEnabled, vodCommentLayout, vodCommentSplitTop.
+ *   nativeAdapter/view/chapters 모듈.
+ * 옵션 키: vodCommentTabsEnabled, vodCommentAutoChaptersEnabled, vodCommentLayout, vodCommentSplitTop.
  */
 (() => {
     "use strict";
@@ -13,6 +13,7 @@
     if (root.vodCommentTabs) return;
 
     const {
+        chapters: chaptersModule,
         model,
         nativeAdapter: nativeAdapterModule,
         repository: repositoryModule,
@@ -69,6 +70,13 @@
     let nativeChatShellSeen = false;
     let previousVideoChatLog = null;
     let documentListenersInstalled = false;
+
+    const commentChapters = chaptersModule.createCommentChapters({
+        getMainVideoElement,
+        getVideoNo: getVodVideoNoFromPath,
+        injectStyleOnce,
+        seek: seekToCommentTime,
+    });
 
     const commentRepository = repositoryModule.createCommentRepository({
         fetchPage: fetchChzzkCommentPage,
@@ -281,6 +289,18 @@
         }
 
         Promise.resolve(promise).then((result) => {
+            if (
+                runtimeInstalled &&
+                isFeatureEnabled() &&
+                result.initial &&
+                result.status === "loaded" &&
+                result.state.commentActive &&
+                result.state.videoNo === currentVideoNo &&
+                result.state.order === model.DEFAULT_ORDER &&
+                result.state === commentRepository.getState(currentVideoNo, model.DEFAULT_ORDER)
+            ) {
+                commentChapters.offerPopularComments(currentVideoNo, result.state.items);
+            }
             if (presentation !== requestPresentationGeneration) return;
             if (result.status === "stale" || result.status === "aborted") return;
             if (result.state !== getActiveState() || result.state.videoNo !== currentVideoNo) return;
@@ -384,7 +404,8 @@
             commentView.isCommentsVisible() ||
             document.visibilityState !== "visible" ||
             window.navigator?.connection?.saveData === true ||
-            !commentView.getPanel()?.isConnected ||
+            (!commentView.getPanel()?.isConnected &&
+                (!featureOptions.vodCommentAutoChaptersEnabled || !document.getElementById("commentArea"))) ||
             videoNo !== getVodVideoNoFromPath()
         ) {
             return false;
@@ -447,6 +468,7 @@
         if (!anchors) {
             if (document.fullscreenElement) teardownMount();
             else if (commentView.hasMount()) scheduleMountGapTeardown();
+            else if (document.getElementById("commentArea")) scheduleCommentPrefetch();
             return;
         }
         clearMountGapTimer();
@@ -512,15 +534,15 @@
         return [...mutation.addedNodes, ...mutation.removedNodes].some(nodeCouldAffectAnchors);
     }
 
-    function nodeCouldAffectNativeCommentArea(node) {
-        return (
-            node instanceof Element && (node.matches("#commentArea") || Boolean(node.querySelector?.("#commentArea")))
+    function mutationCouldAffectNativeCommentArea(mutation) {
+        if (mutation.type !== "childList") return false;
+        return [...mutation.addedNodes, ...mutation.removedNodes].some((node) =>
+            containsSelector(node, "#commentArea")
         );
     }
 
-    function mutationCouldAffectNativeCommentArea(mutation) {
-        if (mutation.type !== "childList") return false;
-        return [...mutation.addedNodes, ...mutation.removedNodes].some(nodeCouldAffectNativeCommentArea);
+    function containsSelector(node, selector) {
+        return node instanceof Element && (node.matches(selector) || Boolean(node.querySelector(selector)));
     }
 
     function nodeCouldAffectVideoMoreColumn(node) {
@@ -539,6 +561,7 @@
     function installBodyObserver() {
         if (!document.documentElement || !isVodRoute()) return;
         nativeAdapter.refresh();
+        commentChapters.refresh(currentVideoNo);
         if (bodyObserver) return;
         // The SDK can leave header_info transparent or paint a player overlay above it after
         // the aside closes. Keep CHZZK's own button reachable even on entry with chat folded.
@@ -558,13 +581,18 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
                 teardownMount();
                 return;
             }
-            if (mutations.some(mutationCouldAffectNativeCommentArea)) nativeAdapter.refresh();
+            const nativeCommentsChanged = mutations.some(mutationCouldAffectNativeCommentArea);
+            const anchorsChanged = mutations.some(mutationCouldAffectAnchors);
+            if (nativeCommentsChanged) nativeAdapter.refresh();
+            if (nativeCommentsChanged || anchorsChanged) {
+                commentChapters.refresh(currentVideoNo);
+            }
             if (commentOnlyAside?.isConnected && mutations.some(mutationCouldAffectVideoMoreColumn)) {
                 syncCommentOnlyVideoMoreColumn();
                 scheduleEnsureMounted();
             }
             if (commentView.isDisconnected()) scheduleEnsureMounted({ immediate: true });
-            else if (mutations.some(mutationCouldAffectAnchors)) scheduleEnsureMounted();
+            else if (anchorsChanged || (nativeCommentsChanged && !commentView.hasMount())) scheduleEnsureMounted();
         });
         bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
@@ -572,6 +600,7 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
     function disconnectBodyObserver() {
         bodyObserver?.disconnect();
         bodyObserver = null;
+        commentChapters.refresh("");
         document.getElementById(NATIVE_HEADER_STYLE_ID)?.remove();
     }
 
@@ -591,6 +620,7 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
     function installDocumentListeners() {
         if (documentListenersInstalled) return;
         document.addEventListener("fullscreenchange", handleFullscreenChange, true);
+        document.addEventListener("visibilitychange", scheduleCommentPrefetch);
         // Bubble after the viewer has handled its keys. Keeping their defaults lets Space activate a focused button.
         document.addEventListener("keydown", stopPhotoViewerPlayerKey);
         document.addEventListener("keyup", stopPhotoViewerPlayerKey);
@@ -600,6 +630,7 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
     function disconnectDocumentListeners() {
         if (!documentListenersInstalled) return;
         document.removeEventListener("fullscreenchange", handleFullscreenChange, true);
+        document.removeEventListener("visibilitychange", scheduleCommentPrefetch);
         document.removeEventListener("keydown", stopPhotoViewerPlayerKey);
         document.removeEventListener("keyup", stopPhotoViewerPlayerKey);
         documentListenersInstalled = false;
@@ -670,11 +701,13 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
     }
 
     function applyOptions(options) {
+        const automaticChanged = featureOptions.vodCommentAutoChaptersEnabled !== options.vodCommentAutoChaptersEnabled;
         const layoutChanged =
             featureOptions.vodCommentLayout !== options.vodCommentLayout ||
             featureOptions.vodCommentSplitTop !== options.vodCommentSplitTop;
         if (layoutChanged) saveActiveScroll();
         featureOptions = options;
+        commentChapters.setAutomaticEnabled(options.vodCommentAutoChaptersEnabled === true);
         commentView.setLayout({ mode: options.vodCommentLayout, top: options.vodCommentSplitTop });
         const enabled = isFeatureEnabled();
         if (enabled === appliedEnabledState) {
@@ -682,6 +715,8 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
                 cancelScheduledCommentPrefetch();
                 if (commentView.isCommentsVisible()) showActiveComments();
                 else scheduleCommentPrefetch();
+            } else if (enabled && automaticChanged) {
+                scheduleCommentPrefetch();
             }
             return;
         }
