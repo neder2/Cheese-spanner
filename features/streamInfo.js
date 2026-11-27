@@ -615,7 +615,7 @@
     }
 
     function renderGraph() {
-        const graph = panel.querySelector("svg");
+        const graph = panel.querySelector(".bcsi-graph");
         if (!graph || !view) return;
         const maximum = Math.max(
             1,
@@ -692,13 +692,17 @@
         if (panel !== region || panelRoute !== location.pathname) return null;
         const measured = video?.isConnected && video.readyState > 0 && !isAdvertisement() && !transitioning;
         const native = measured && !livePanel && !auxiliary ? readCurrentNative(video) : null;
-        const heights = livePanel ? tracks.map((track) => Number(track.videoHeight)) : native?.candidateHeights;
+        const isCandidateHeight = (height) => Number.isSafeInteger(height) && height > 0 && height <= 16384;
+        // The live API can also return tracks with no video dimensions.
+        const heights = livePanel
+            ? tracks.map((track) => Number(track.videoHeight)).filter(isCandidateHeight)
+            : native?.candidateHeights;
         const candidates =
             measured &&
             Array.isArray(heights) &&
             heights.length > 0 &&
             heights.length <= 256 &&
-            heights.every((height) => Number.isSafeInteger(height) && height > 0 && height <= 16384)
+            heights.every(isCandidateHeight)
                 ? [...new Set(heights)]
                       .sort((a, b) => b - a)
                       .map((height) => `${height}p`)
@@ -826,6 +830,7 @@
                 legend.append(item);
             }
             const graph = svgElement("svg", {
+                class: "bcsi-graph",
                 viewBox: "0 0 300 120",
                 role: "img",
                 "aria-label": "최근 60초의 라이브 지연과 재생 버퍼",
@@ -977,8 +982,8 @@
 #${ID} .bcsi-legend span:before{content:"";display:inline-block;inline-size:18px;border-block-start:2px solid;vertical-align:middle;margin-inline-end:4px}
 #${ID} .bcsi-delay{color:var(--bcsi-delay);stroke:var(--bcsi-delay)}#${ID} .bcsi-buffer{color:var(--bcsi-buffer);stroke:var(--bcsi-buffer);stroke-dasharray:5 4}
 #${ID} .bcsi-legend .bcsi-buffer:before{border-block-start-style:dashed}
-#${ID} svg{display:block;inline-size:100%;block-size:auto;overflow:visible;pointer-events:none;margin-block-start:8px}
-#${ID} svg path{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}#${ID} svg text{fill:currentColor;font-size:10px;font-variant-numeric:tabular-nums}
+#${ID} .bcsi-graph{display:block;inline-size:100%;block-size:auto;overflow:visible;pointer-events:none;margin-block-start:8px}
+#${ID} .bcsi-graph path{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}#${ID} .bcsi-graph text{fill:currentColor;font-size:10px;font-variant-numeric:tabular-nums}
 #${ID} .bcsi-axis,#${ID} .bcsi-mode-marker{stroke:currentColor;opacity:.35;stroke-width:1}#${ID} .bcsi-mode-marker{opacity:.75;stroke-dasharray:2 3}
 #${ID} figcaption{font-size:12px;overflow-wrap:anywhere}#${ID} .bcsi-observation{margin:16px 0 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 `

@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
-const { waitForCondition } = require("./helpers/extension-page-fixture.js");
+const { dispatchTrusted, waitForCondition } = require("./helpers/extension-page-fixture.js");
 const source = fs.readFileSync(path.join(__dirname, "../features/streamInfo.js"), "utf8");
 // Native home-menu structure observed on live and VOD pages on 2026-09-15.
 const nativeSettings = `<div role="menu" class="pzp-settings pzp-pc-settings pzp-pc__settings">
@@ -707,8 +707,11 @@ test("live diagnostics use the actual MAIN snapshot and model with one sample pe
     assert.match(f.text(), /프레임 누락3개 · 5\.0%/);
     assert.match(f.text(), /1\.0초 관측/);
     assert.equal(f.samples.length, 2);
-    assert.equal(f.doc.querySelectorAll("#cheese-spanner-stream-info svg path[data-series]").length, 2);
-    assert.ok(f.doc.querySelector('#cheese-spanner-stream-info svg[role="img"][aria-describedby]'));
+    const panel = f.doc.getElementById("cheese-spanner-stream-info");
+    const graph = panel.querySelector('figure > svg[role="img"][aria-describedby]');
+    assert.ok(graph);
+    assert.match(graph.querySelector('path[data-series="delay"]')?.getAttribute("d") ?? "", /^M/);
+    assert.match(graph.querySelector('path[data-series="buffer"]')?.getAttribute("d") ?? "", /^M/);
     assert.equal(f.doc.querySelector("#cheese-spanner-stream-info [aria-live]"), null);
     assert.equal(f.video.hasAttribute("data-bcsi-request"), false);
     assert.equal(f.video.hasAttribute("data-bcsi-result"), false);
@@ -716,10 +719,32 @@ test("live diagnostics use the actual MAIN snapshot and model with one sample pe
     f.native.selected.id = "low-latency-1080";
     f.tick();
     assert.match(f.text(), /현재 재생 방식저지연/);
-    assert.ok(f.doc.querySelector("#cheese-spanner-stream-info [data-mode-change]"));
+    assert.ok(graph.querySelector("[data-mode-change]"));
+    assert.equal(panel.querySelector(".bcsi-close svg path")?.getAttribute("d"), "m4 4 8 8m0-8-8 8");
     assert.equal(f.requests.length, 1);
     assert.equal(f.timers.size, 1);
     assert.deepEqual(f.controlCalls, []);
+});
+
+test("live diagnostic copy lists video heights when the API also includes tracks without video dimensions", async (t) => {
+    const f = fixture(t, async () =>
+        response([...tracks, { videoHeight: 720 }, { audioBitRate: 128000 }, { videoHeight: 480 }, ...tracks])
+    );
+    let copied;
+    Object.defineProperty(f.w.navigator, "clipboard", {
+        value: {
+            async writeText(text) {
+                copied = text;
+            },
+        },
+    });
+    f.open();
+    await new Promise(setImmediate);
+    const copy = f.doc.querySelector("[data-bcsi-copy]");
+    dispatchTrusted(copy, new f.w.MouseEvent("click", { bubbles: true }));
+    assert.match(copied, /^화질 후보: 1080p, 720p, 480p$/m);
+    assert.match(copied, /^재생 해상도: 1920 × 1080$/m);
+    assert.match(copied, /^재생 버퍼: 4\.0초$/m);
 });
 
 test("live source emptying keeps the panel and hides sampling gaps while VOD still closes", async (t) => {
