@@ -82,7 +82,16 @@ npx.cmd --no-install web-ext build --config web-ext-config.mjs --filename "chees
 
 같은 이름의 기존 ZIP을 임의로 덮어쓰지 않아요. ZIP 안의 manifest와 실제 파일 목록·바이트를 작업 트리와 대조해요. 정적 참조 파일, 동적 광고 스크립트, 라이선스·폰트가 포함됐는지 확인하고 개발 의존성·테스트·작업 문서·미공개 광고 SKIP 코드·로컬 백업이 들어가지 않았는지 확인해요. build 명령 성공만으로 배포 내용 확인을 대신하지 않아요.
 
-GitHub Release를 요청받은 경우에만 업데이트 내역과 맞춘 본문으로 생성해요. 스토어 업로드·심사 제출 여부는 별도로 보고해요. 새 권한이나 데이터 처리가 바뀌면 설치·업데이트 경고와 고지도 다시 확인해요.
+`main` 반영과 GitHub Release 생성을 요청받았다면 [루트 지침의 커밋과 릴리스 제목](../AGENTS.md#커밋과-릴리스-제목)을 그대로 적용해요. 개발 브랜치의 자유 제목 중간 커밋이 `main` 이력과 GitHub 파일 목록에 섞이지 않도록 일반 merge·fast-forward 대신 `main`에서 `--squash` 단일 커밋으로 반영해요.
+
+```powershell
+git switch main
+git merge --squash <버전 브랜치>
+git commit -m "Cheese Spanner <버전>"
+git log -n 5 --oneline main
+```
+
+푸시 전에 `git log -1 --format=%s main` 결과가 `Prepare ... release`, `v<버전>` 등 접두·접미사 없이 정확히 `Cheese Spanner <버전>`인지 확인해요. GitHub Release는 요청받은 경우에만 업데이트 내역과 맞춘 본문과 정확한 제목 `치즈 스패너 <버전>`(띄어쓰기 유지)으로 생성하고, 생성 직후 GitHub에 표시된 제목을 다시 확인해요. 스토어 업로드·심사 제출 여부는 별도로 보고해요. 새 권한이나 데이터 처리가 바뀌면 설치·업데이트 경고와 고지도 다시 확인해요.
 
 ## 버전별 안내 준비와 릴리스 전 필수 점검
 
