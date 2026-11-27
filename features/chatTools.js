@@ -1325,5 +1325,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         pageHidden = false;
         if (isFeatureEnabled()) installRuntime();
     });
-    Object.assign(namespace, { parseChatMessage, renderModeratorBox: ensureModeratorBox, syncBlindReveal });
+    Object.assign(namespace, {
+        WELCOME_MESSAGE_STYLE_TEXT,
+        parseChatMessage,
+        renderModeratorBox: ensureModeratorBox,
+        syncBlindReveal,
+    });
 })();

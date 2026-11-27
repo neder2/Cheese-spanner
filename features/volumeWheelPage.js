@@ -55,8 +55,9 @@
     }
 
     function scheduleVolumeCommit(video, ratio, token) {
+        const path = location.pathname;
         const apply = () => {
-            if (token !== volumeApplyToken) return;
+            if (token !== volumeApplyToken || location.pathname !== path || !video.isConnected) return;
             commitVideoVolume(video, ratio);
         };
 
@@ -130,6 +131,7 @@
     function uninstallWheelListener() {
         if (!wheelListenerInstalled) return;
         wheelListenerInstalled = false;
+        volumeApplyToken++;
         window.removeEventListener("wheel", handleWheel, true);
     }
 

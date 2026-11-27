@@ -314,7 +314,7 @@
  * MIT License — and was modified for Cheese Spanner.
  * Full license text: THIRD_PARTY_NOTICES.md
  */
-(function installCompressor(auxiliaryIndex, readMainSelection) {
+(function installCompressor(auxiliaryIndex, readMainSelection, outputChanges = new EventTarget()) {
     const auxiliary = Number.isInteger(auxiliaryIndex);
     const prefix = auxiliary
         ? `cheese-spanner-audio-compressor-aux-${auxiliaryIndex}`
@@ -357,6 +357,7 @@
     } = CheeseSpanner.utils;
 
     const graphs = new WeakMap();
+    let outputHold = null;
     let featureOptions = normalizeOptions();
     let optionsReady = false;
     let stateReady = auxiliary;
@@ -418,7 +419,7 @@
             stateRestorePending = false;
             stateReady = true;
             syncState();
-            for (const sync of auxiliaryViews.values()) sync();
+            for (const view of auxiliaryViews.values()) view.syncState();
         }
     }
 
@@ -428,6 +429,7 @@
 
     function setCompressorVolume(value) {
         if (!Number.isFinite(value)) return;
+        endOutputHold(true);
         compressorVolume = normalizeCompressorVolume(value);
         saveCompressorState();
         const graph = activeVideo ? graphs.get(activeVideo) : null;
@@ -499,7 +501,93 @@
         setParam(graph.gain.gain, featureOptions.audioCompressorMakeupGain * compressorVolume, graph.context);
     }
 
+    // Multiview may silence only an output already owned by this compressor in this document.
+    // The last gain is independent of both the saved compressor level and the site's media controls.
+    function canHoldOutput(video) {
+        const graph = video && graphs.get(video);
+        return Boolean(
+            !audioRecoveryStopped &&
+            usableVideo(video) &&
+            activeVideo === video &&
+            targetVideo() === video &&
+            graph?.mode &&
+            !graph.failed &&
+            !graph.outputUnavailable &&
+            graph.context.state === "running" &&
+            !findExternalCompressor()
+        );
+    }
+    function endOutputHold(lost = false) {
+        if (!outputHold) return;
+        const { graph, gate, onLost } = outputHold;
+        outputHold = null;
+        try {
+            graph.gain.connect(graph.context.destination);
+            safeDisconnect(gate);
+            graph.outputGate = null;
+            // The direct path already works. Dropping the dormant input is best effort.
+            try {
+                graph.gain.disconnect(gate);
+            } catch {
+                /* The graph may already be changing. */
+            }
+        } catch {
+            // Preserve an audible output even when the media pipeline rejects reconnection.
+            gate.gain.value = 1;
+        }
+        if (lost) onLost();
+    }
+    function holdOutput(video, onLost) {
+        if (outputHold || !canHoldOutput(video)) return null;
+        const graph = graphs.get(video);
+        let gate = graph.outputGate;
+        if (!gate) {
+            try {
+                gate = graph.context.createGain();
+                gate.gain.value = 0;
+                gate.connect(graph.context.destination);
+                graph.gain.connect(gate);
+                graph.gain.disconnect(graph.context.destination);
+                graph.outputGate = gate;
+            } catch {
+                safeDisconnect(gate);
+                if (gate) {
+                    try {
+                        graph.gain.disconnect(gate);
+                    } catch {
+                        /* The connection may not exist. */
+                    }
+                }
+                graph.outputUnavailable = true;
+                outputChanges.dispatchEvent(new Event("change"));
+                return null;
+            }
+        }
+        gate.gain.value = 0;
+        const hold = (outputHold = { graph, gate, onLost });
+        return () => {
+            if (outputHold === hold) endOutputHold();
+        };
+    }
+    const output = { available: canHoldOutput, hold: holdOutput, syncState };
+    if (!auxiliary) {
+        const outputFor = (video) => {
+            if (canHoldOutput(video)) return output;
+            for (const auxiliaryOutput of auxiliaryViews.values())
+                if (auxiliaryOutput.available(video)) return auxiliaryOutput;
+            return null;
+        };
+        CheeseSpanner.mainAudioOutput = {
+            available: (video) => !!outputFor(video),
+            hold: (video, onLost) => outputFor(video)?.hold(video, onLost) || null,
+            changes: outputChanges,
+        };
+    }
+
     function disconnectGraph(graph) {
+        if (graph && outputHold?.graph === graph) endOutputHold(true);
+        safeDisconnect(graph?.outputGate);
+        if (graph) graph.outputGate = null;
         safeDisconnect(graph?.source);
         safeDisconnect(graph?.compressor);
         safeDisconnect(graph?.gain);
@@ -519,6 +607,7 @@
             }
             graph.gain.connect(graph.context.destination);
             graph.mode = mode;
+            outputChanges.dispatchEvent(new Event("change"));
             return true;
         } catch (_) {
             graph.mode = "";
@@ -574,6 +663,8 @@
     }
 
     function handleAudioStateChange() {
+        if (outputHold && audioContext?.state !== "running") endOutputHold(true);
+        outputChanges.dispatchEvent(new Event("change"));
         resumeContext();
     }
 
@@ -633,6 +724,7 @@
 
     function releaseActiveGraph() {
         if (!activeVideo) return;
+        endOutputHold(true);
         // Losing the main-player role does not mean the native video is destroyed.
         // Preserve its source in the WeakMap so the same element can return safely.
         if (auxiliary) disconnectGraph(graphs.get(activeVideo));
@@ -979,6 +1071,7 @@
             compressorVolume = remembered.volume;
         }
         if (findExternalCompressor()) {
+            endOutputHold(true);
             removeButton();
             bypassActiveGraph();
             return;
@@ -1066,6 +1159,7 @@
     }
 
     bindFeatureOptions((options) => {
+        if (featureOptions.audioCompressorEnabled !== options.audioCompressorEnabled) endOutputHold(true);
         featureOptions = options;
         optionsReady = true;
         installRuntime();
@@ -1078,12 +1172,13 @@
     });
     if (auxiliary) {
         document.addEventListener(AUXILIARY, syncState);
-        return syncState;
+        return output;
     }
     const readSelection = () => (stateReady ? { active: compressorActive, volume: compressorVolume } : null);
     document.addEventListener(AUXILIARY, () => {
         for (const { index } of CheeseSpanner.vodMultiview?.getAuxiliaries() || []) {
-            if (!auxiliaryViews.has(index)) auxiliaryViews.set(index, installCompressor(index, readSelection));
+            if (!auxiliaryViews.has(index))
+                auxiliaryViews.set(index, installCompressor(index, readSelection, outputChanges));
         }
     });
 })();

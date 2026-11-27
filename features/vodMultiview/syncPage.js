@@ -4,6 +4,7 @@
     const native = window.CheeseSpannerVodNative;
     const COMMAND = "cheese-spanner:vod-multiview:command";
     const STATUS = "cheese-spanner:vod-multiview:status";
+    const AUDIO_REFERENCE = "cheese-spanner:vod-multiview:audio-reference";
     const REFERENCE = "cheese-spanner:vod-multiview:reference";
     const AUXILIARY = "cheese-spanner:vod-multiview:auxiliary";
     const MEDIA = "video.webplayer-internal-video";
@@ -589,6 +590,18 @@
         const panel = event.target;
         const command = event.detail;
         if (!(panel instanceof HTMLElement) || panel.id !== "cheese-spanner-vod-multiview") return;
+        if (command?.action === "read-audio") {
+            const session = sessions.get(command.request);
+            if (!session || session.panel !== panel || !canToggleSync(session) || isMiniMode(session.host)) return;
+            const { player, media } = session.slot;
+            if (main.ad || player.muted !== media.muted || !durationMatches(session.mainInfo, main.video)) return;
+            media.dispatchEvent(
+                new CustomEvent(AUDIO_REFERENCE, {
+                    detail: { request: session.request, id: session.subInfo.id, status: session.status },
+                })
+            );
+            return;
+        }
         if (command?.action === "stop" || command?.action === "resync" || command?.action === "sync") {
             const session = sessions.get(command.request);
             if (session?.panel !== panel) return;

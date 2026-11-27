@@ -43,25 +43,120 @@
             routeId = null,
             native = null,
             oldMedia = null;
-        let applyingSlotAudio = false,
+        let soloId = null,
+            releaseMainOutput = null,
+            applyingSlotAudio = false,
             saveQueue = Promise.resolve();
         function current(player) {
             return active && state.active && players.get(player.id) === player && !player.abort.signal.aborted;
+        }
+        // Session entries keep the ordinary mix. Native main mute and volume belong to the site.
+        function effectiveMute(entry) {
+            return entry.muted || Boolean(soloId && entry.id !== routeId && entry.id !== soloId);
+        }
+        function updateAudioControls() {
+            for (const player of players.values()) updatePlayerUi(player);
+        }
+        function applySolo(id) {
+            const main = players.get(routeId)?.video;
+            const needsGate = id && id !== routeId && main && !main.muted && main.volume > 0;
+            if (needsGate && !releaseMainOutput) {
+                releaseMainOutput = root.mainAudioOutput?.hold(main, clearSolo);
+                if (!releaseMainOutput) return;
+            }
+            soloId = id;
+            applyingSlotAudio = true;
+            try {
+                // Silence outgoing auxiliaries before restoring any held auxiliary or the main output.
+                for (const muted of [true, false]) {
+                    for (const entry of state.channels) {
+                        if (entry.id === routeId) continue;
+                        const video = players.get(entry.id)?.video;
+                        if (video && effectiveMute(entry) === muted && video.muted !== muted) video.muted = muted;
+                    }
+                }
+                if (!needsGate && releaseMainOutput) {
+                    releaseMainOutput();
+                    releaseMainOutput = null;
+                }
+            } finally {
+                applyingSlotAudio = false;
+            }
+            updateAudioControls();
+        }
+        function clearSolo() {
+            if (!soloId) return;
+            // Capture a real mixer edit even if its queued volumechange has not run yet.
+            let changed = false;
+            for (const entry of state.channels) {
+                const video = players.get(entry.id)?.video;
+                if (!video) continue;
+                if (video.muted !== effectiveMute(entry) && entry.muted !== video.muted) {
+                    entry.muted = video.muted;
+                    changed = true;
+                }
+                if (video.volume !== entry.volume) {
+                    entry.volume = video.volume;
+                    changed = true;
+                }
+            }
+            applySolo(null);
+            if (changed) persistSession();
+        }
+        function soloUnavailable(player) {
+            if (player && soloId === player.id) return "";
+            const main = players.get(routeId)?.video;
+            const video = player?.video;
+            if (
+                !player ||
+                !current(player) ||
+                model.channelFromUrl(location.href) !== routeId ||
+                !video?.isConnected ||
+                !main?.isConnected ||
+                main !== native?.querySelector("video.webplayer-internal-video") ||
+                video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+                video.error ||
+                player.error ||
+                video.ended ||
+                (!player.main && !player.hls)
+            )
+                return "영상 연결 대기";
+            if (state.channels.length < 2) return "보조 방송을 추가하면 사용 가능";
+            const entry = state.channels.find((item) => item.id === player.id);
+            if (!entry || entry.muted || video.volume === 0) return "이 방송의 음소거·볼륨을 먼저 조절하세요";
+            if (video.paused) return "이 방송을 먼저 재생하세요";
+            if (!player.main && !main.muted && main.volume > 0 && !root.mainAudioOutput?.available(main))
+                return "메인 소리가 켜져 있어 보조 단독 듣기 불가";
+            return "";
+        }
+        function toggleSolo(player) {
+            if (player && soloId === player.id) {
+                clearSolo();
+                return;
+            }
+            for (const member of players.values()) if (current(member) && member.video) captureAudio(member);
+            if (!soloUnavailable(player)) applySolo(player.id);
         }
         function captureAudio(player) {
             if (applyingSlotAudio) return;
             const entry = state.channels.find((item) => item.id === player.id);
             if (!entry || !player.video) return;
-            if (entry.volume === player.video.volume && entry.muted === player.video.muted) {
+            if (entry.volume === player.video.volume && effectiveMute(entry) === player.video.muted) {
                 updatePlayerUi(player);
+                return;
+            }
+            if (soloId) {
+                clearSolo();
                 return;
             }
             entry.volume = player.video.volume;
             entry.muted = player.video.muted;
             persistSession();
-            updatePlayerUi(player);
+            if (player.main) updateAudioControls();
+            else updatePlayerUi(player);
         }
         function transferSlotAudio(assignments) {
+            clearSolo();
             // Entries cache the sound of the occupied slot; take every source before changing any occupant.
             const sounds = new Map(
                 state.channels.map((entry) => {
@@ -423,6 +518,7 @@
         }
         function bindVideo(player, video) {
             if (player.video === video) return;
+            if (player.video && (player.main || soloId === player.id)) clearSolo();
             player.unbind?.();
             player.video = video;
             player.liveClock = null;
@@ -431,9 +527,14 @@
             if (!video) return;
             const entry = state.channels.find((item) => item.id === player.id);
             video.volume = entry.volume;
-            video.muted = entry.muted;
+            video.muted = effectiveMute(entry);
             const onMedia = (event) => {
                 if (!current(player) || player.video !== video) return;
+                if (
+                    (player.main && event.type === "emptied") ||
+                    (soloId === player.id && ["emptied", "ended", "error", "pause"].includes(event.type))
+                )
+                    clearSolo();
                 notePlayback(player, event);
                 applyDelay(player, event.type, event);
                 if (event.type === "loadedmetadata" || event.type === "resize") positionCells();
@@ -462,6 +563,7 @@
                 for (const type of PLAYBACK_ONLY_EVENTS) video.removeEventListener(type, onPlayback);
             };
             applyDelay(player);
+            if (player.main) for (const item of players.values()) updatePlayerUi(item);
         }
         async function play(player) {
             const video = player.video;
@@ -476,6 +578,7 @@
             if (!current(player) || player.video !== video || player.playRequest !== request) return;
             player.playRequest = null;
             player.error = error;
+            if (error && soloId === player.id) clearSolo();
             updatePlayerUi(player);
         }
         function togglePlay(player) {
@@ -547,6 +650,7 @@
                     });
                     hls.on(events.ERROR, (_event, data) => {
                         if (!data?.fatal || !current(player)) return;
+                        if (soloId === player.id) clearSolo();
                         player.playRequest = null;
                         player.error = "재생 실패. ‘재생 재시도’ 선택.";
                         player.status = "unsupported";
@@ -567,6 +671,7 @@
             }
         }
         function dispose(player) {
+            if (player.main || soloId === player.id) clearSolo();
             player.abort.abort();
             player.unbind?.();
             player.hls?.destroy();
@@ -641,20 +746,26 @@
         }
 
         function reconcile(mainId, node) {
-            if (!active) chrome.storage?.onChanged?.addListener(storageChanged);
+            if (!active) {
+                chrome.storage?.onChanged?.addListener(storageChanged);
+                root.mainAudioOutput?.changes.addEventListener("change", updateAudioControls);
+            }
             active = true;
             routeId = mainId;
             native = node;
             ensurePlayers();
         }
         function prepareRoute() {
+            clearSolo();
             for (const player of players.values()) if (current(player) && player.video) captureAudio(player);
             const video = players.get(routeId)?.video;
             oldMedia = video ? { video, src: video.currentSrc } : null;
         }
         function clear(clearMediaGuard) {
+            clearSolo();
             active = false;
             chrome.storage?.onChanged?.removeListener(storageChanged);
+            root.mainAudioOutput?.changes.removeEventListener("change", updateAudioControls);
             for (const player of [...players.values()]) dispose(player);
             native = null;
             if (clearMediaGuard) oldMedia = null;
@@ -666,6 +777,12 @@
                 return players.size;
             },
             current,
+            get soloId() {
+                return soloId;
+            },
+            soloUnavailable,
+            toggleSolo,
+            clearSolo,
             reconcile,
             syncNative,
             prepareRoute,

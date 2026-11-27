@@ -321,7 +321,7 @@
         );
     }
 
-    function getLiveMessageList(chatLog, channelId) {
+    function getLiveClient(chatLog, channelId) {
         if (!channelId) return null;
         const fiberKey = Object.getOwnPropertyNames(chatLog).find((name) => name.startsWith(REACT_FIBER_PREFIX));
         if (!fiberKey) return null;
@@ -333,10 +333,14 @@
             if (client && alternate && client !== alternate) return null;
             const owner = client || alternate;
             if (ownValue(ownValue(owner, "config"), "streamingChannelId") !== channelId) return null;
-            const list = ownValue(owner, "messageList");
-            return Array.isArray(list) ? list : null;
+            return owner;
         }
         return null;
+    }
+
+    function getLiveMessageList(chatLog, channelId) {
+        const list = ownValue(getLiveClient(chatLog, channelId), "messageList");
+        return Array.isArray(list) ? list : null;
     }
 
     function matchesMessageIdentity(message, row) {
@@ -471,6 +475,184 @@
         );
     }
 
+    // The experimental rewind view asks only for plain, currently rendered NORMAL rows.
+    // Check the recent list as well as React row props: a moderated row can still have old props.
+    let rewindState = null;
+    let nextRewindClient = 0;
+    const rewindAttr = "data-bctm-chat-sample";
+
+    const rewindHidden = '[hidden],[aria-hidden="true"],[data-bcct-keyword-filtered],[data-bcct-blind-masked],.blind';
+    const REWIND_TTL_MS = 120000;
+    const changedText = new WeakSet();
+    function noteTextChanges(records) {
+        for (const record of records) changedText.add(record.target);
+    }
+    const rewindChanges = new MutationObserver(noteTextChanges);
+
+    function clearRewindChat() {
+        rewindChanges.disconnect();
+        rewindState = null;
+    }
+
+    function matchesRewindMessage(message, entry, text) {
+        return (
+            matchesMessageIdentity(message, entry) &&
+            ownValue(message, "type") === 1 &&
+            ownValue(message, "status") === "NORMAL" &&
+            ownValue(message, "originalContent") === text
+        );
+    }
+
+    function rewindKeywordRole(message, user) {
+        const profile = ownValue(message, "profile");
+        if (ownValue(profile, "userIdHash") !== user) return null;
+        const { roleCode, verifiedMarkType } = readRoleMetadata(profile);
+        // Match the collection roles in chatTools/parser.js. Site operators and official marks alone do not qualify.
+        if (
+            roleCode === "streamer" ||
+            roleCode === "streaming_channel_manager" ||
+            roleCode === "streaming_chat_manager"
+        )
+            return roleCode;
+        if (verifiedMarkType === "PARTNER" || verifiedMarkType === "CHALLENGER") return verifiedMarkType;
+        return null;
+    }
+
+    function sampleRewindChat(event) {
+        const log = event.target;
+        const path = location.pathname;
+        const channel = /^\/live\/([a-f0-9]{32})\/?$/.exec(path)?.[1];
+        if (!channel || !(log instanceof HTMLElement) || !log.matches(LIVE_CHAT_LOG_SELECTOR)) return;
+        log.removeAttribute(rewindAttr);
+        const client = getLiveClient(log, channel);
+        const list = ownValue(client, "messageList");
+        if (!Array.isArray(list)) return clearRewindChat();
+        noteTextChanges(rewindChanges.takeRecords());
+        rewindChanges.disconnect();
+        if (rewindState?.client.deref() !== client || rewindState.log.deref() !== log || rewindState.path !== path)
+            rewindState = {
+                client: new WeakRef(client),
+                log: new WeakRef(log),
+                path,
+                owner: ++nextRewindClient,
+                entries: [],
+            };
+
+        const now = Date.now();
+        const mono = performance.now();
+        const previous = new Map(rewindState.entries.map((entry) => [entry.id, entry]));
+        const latest = new Map();
+        for (let i = Math.max(0, list.length - MAX_LIVE_MESSAGE_LIST_SIZE); i < list.length; i++) {
+            const message = ownValue(list, i);
+            latest.set(ownValue(message, "key"), message);
+        }
+        const verified = [];
+        const mountedKeys = new Set();
+        const bodies = log.querySelectorAll(
+            'button[class*="_nickname_"][aria-haspopup="true"] ~ span[class*="_text_"]'
+        );
+        // A long expanded scrollback is not an arrival stream.
+        if (bodies.length <= 128) {
+            for (const body of bodies) {
+                const row = findNearestMessage(body.parentElement, log);
+                const key = ownValue(row, "key");
+                mountedKeys.add(key);
+                const node = body.firstChild;
+                if (
+                    body.childNodes.length !== 1 ||
+                    node.nodeType !== Node.TEXT_NODE ||
+                    body.closest(rewindHidden) ||
+                    body.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) !== true
+                )
+                    continue;
+                const user = normalizeUserHash(ownValue(row, "user"));
+                const time = normalizeMessageTime(ownValue(row, "time"));
+                if (typeof key !== "string" || !key || key.length > 256 || !user || !time) continue;
+                const id = JSON.stringify([key, user, time]);
+                const old = previous.get(id);
+                const received = old?.received ?? mono;
+                const receivedWall = old?.receivedWall ?? now;
+                if (
+                    mono < received ||
+                    mono - received >= REWIND_TTL_MS ||
+                    now < receivedWall ||
+                    now - receivedWall >= REWIND_TTL_MS ||
+                    (!old && (time > now + 1000 || now - time >= 10000))
+                )
+                    continue;
+                const text = node.data;
+                if (!text || text.length > 500 || !text.trim()) continue;
+                const entry = { key, user, time };
+                const current = latest.get(key);
+                if (!matchesRewindMessage(row, entry, text) || !matchesRewindMessage(current, entry, text)) continue;
+                const role = rewindKeywordRole(current, user);
+                changedText.delete(node);
+                verified.push({
+                    ...entry,
+                    keywordExempt: !!role && (row === current || rewindKeywordRole(row, user) === role),
+                    received,
+                    receivedWall,
+                    body: new WeakRef(body),
+                    node: new WeakRef(node),
+                    native: new WeakRef(current),
+                    id,
+                    mounted: true,
+                });
+            }
+        }
+        // MAIN holds no text copy. An offscreen message needs its original, unchanged
+        // text node as well as its original NORMAL client entry. GC can shorten replay.
+        if (verified.length) {
+            for (const entry of rewindState.entries) {
+                const body = entry.body.deref();
+                const node = entry.node.deref();
+                if (
+                    mountedKeys.has(entry.key) ||
+                    !body ||
+                    body.isConnected ||
+                    body.closest(rewindHidden) ||
+                    !node ||
+                    body.childNodes.length !== 1 ||
+                    body.firstChild !== node ||
+                    changedText.has(node) ||
+                    mono < entry.received ||
+                    mono - entry.received >= REWIND_TTL_MS ||
+                    now < entry.receivedWall ||
+                    now - entry.receivedWall >= REWIND_TTL_MS
+                )
+                    continue;
+                const current = latest.get(entry.key);
+                if (current && current === entry.native.deref() && matchesRewindMessage(current, entry, node.data)) {
+                    verified.push({
+                        ...entry,
+                        mounted: false,
+                        keywordExempt: entry.keywordExempt && !!rewindKeywordRole(current, entry.user),
+                    });
+                }
+            }
+        }
+        if (
+            !log.isConnected ||
+            location.pathname !== path ||
+            getLiveClient(log, channel) !== client ||
+            ownValue(client, "messageList") !== list
+        )
+            return clearRewindChat();
+        verified.sort((a, b) => b.time - a.time);
+        rewindState.entries = verified.slice(0, 128);
+        const samples = rewindState.entries.map((entry) => {
+            const node = entry.node.deref();
+            rewindChanges.observe(node, { characterData: true });
+            const sample = [entry.id, entry.time, entry.mounted ? node.data : null];
+            if (entry.keywordExempt) sample.push(true);
+            return sample;
+        });
+        writeSource(log, rewindAttr, JSON.stringify([rewindState.owner, samples]));
+    }
+
+    window.addEventListener("pagehide", clearRewindChat);
+    window.addEventListener("cheese-spanner:time-machine-chat-clear", clearRewindChat);
+    document.addEventListener("cheese-spanner:time-machine-chat-sample", sampleRewindChat, true);
     document.addEventListener(SOURCE_REQUEST_EVENT, handleSourceRequest, true);
     document.addEventListener(USER_REQUEST_EVENT, handleUserRequest, true);
     document.addEventListener(BLIND_REQUEST_EVENT, handleBlindRequest, true);

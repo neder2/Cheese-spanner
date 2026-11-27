@@ -3,11 +3,12 @@
     const ID = "cheese-spanner-live-start-registration";
     const PANEL_ID = ID + "-panel";
     const STYLE_ID = ID + "-style";
-    const { CHANNELS_KEY, MAX_CHANNELS, normalizeChannels } = globalThis.CheeseSpannerLiveStart;
+    const { CHANNELS_KEY, MAX_CHANNELS, normalizeChannels, parseChannelId } = globalThis.CheeseSpannerLiveStart;
     const {
         bindFeatureOptions,
         createMutationObserverSync,
         fetchJson,
+        fetchChzzkFollowingChannels,
         injectStyleOnce,
         normalizeChzzkImageUrl,
         onReady,
@@ -71,6 +72,7 @@
         if (!panel) return;
         cancelSearch(panel);
         cancelProfiles(panel);
+        panel.channelController?.abort();
         panel.node.remove();
         panel = null;
         entry?.button.setAttribute("aria-expanded", "false");
@@ -94,7 +96,12 @@
     function register(target, channel, action) {
         if (!active || panel !== target || !ready || pending.has(channel.channelId)) return;
         const id = channel.channelId;
+        if (target.path !== location.pathname) return;
         const removing = action.kind === "remove";
+        if (!removing && channels.length >= MAX_CHANNELS && !channels.some((item) => item.channelId === id)) {
+            showMessage(target, `최대 ${MAX_CHANNELS}개 채널까지 등록할 수 있어요.`);
+            return;
+        }
         if (removing && !channels.some((item) => item.channelId === id)) return;
         const enabled = !removing && !channels.some((item) => item.channelId === id && item[action.key]);
         const version = loadVersion,
@@ -213,9 +220,6 @@
         const info = el("span", "bcls-info"),
             name = el("span", "bcls-name");
         const detail = el("span", "bcls-detail");
-        if (Number.isSafeInteger(channel.followerCount) && channel.followerCount >= 0)
-            detail.textContent = "팔로워 " + channel.followerCount.toLocaleString("ko-KR") + "명";
-        detail.title = detail.textContent;
         info.append(name, detail);
         const controls = el("div", "bcls-actions");
         const actions = ACTIONS.map((action) => {
@@ -243,29 +247,181 @@
         });
         controls.append(remove);
         node.append(avatar, info, controls);
-        return { node, name, actions, remove, avatar, imageUrl: "" };
+        return { node, name, detail, actions, remove, avatar, imageUrl: "" };
     }
+    function updateRow(row, channel) {
+        row.name.textContent = channel.channelName || channel.channelId;
+        row.name.title = row.name.textContent;
+        row.detail.textContent =
+            Number.isSafeInteger(channel.followerCount) && channel.followerCount >= 0
+                ? "팔로워 " + channel.followerCount.toLocaleString("ko-KR") + "명"
+                : "";
+        row.detail.title = row.detail.textContent;
+        syncAvatar(row, normalizeChzzkImageUrl(channel.channelImageUrl) || profileCache.get(channel.channelId) || "");
+        const saved = channels.find((item) => item.channelId === channel.channelId);
+        if (!saved && row.remove === document.activeElement) row.restoreFocus = true;
+        row.remove.hidden = !saved;
+        row.remove.disabled = !ready || pending.has(channel.channelId);
+        row.remove.setAttribute("aria-label", (channel.channelName || channel.channelId) + " 등록 해제");
+        row.remove.setAttribute("aria-busy", String(pending.has(channel.channelId)));
+        for (const action of row.actions) {
+            const enabled = saved?.[action.key] === true;
+            action.state.textContent = enabled ? "켬" : "끔";
+            action.toggle.disabled =
+                !ready || pending.has(channel.channelId) || (!saved && channels.length >= MAX_CHANNELS);
+            action.toggle.setAttribute("aria-pressed", String(enabled));
+            action.toggle.setAttribute("aria-busy", String(pending.has(channel.channelId)));
+            action.toggle.setAttribute(
+                "aria-label",
+                (channel.channelName || channel.channelId) + " " + action.label + (enabled ? " 끄기" : " 켜기")
+            );
+        }
+        if (row.restoreFocus && !pending.has(channel.channelId)) {
+            if (document.activeElement === row.remove || document.activeElement === document.body)
+                row.actions[0].toggle.focus();
+            row.restoreFocus = false;
+        }
+    }
+    function currentChannelId() {
+        if (location.pathname.startsWith("/live/") && !/^\/live\/[a-f0-9]{32}\/?$/i.test(location.pathname)) return "";
+        return parseChannelId(location.href);
+    }
+
+    async function loadCurrentChannel(target) {
+        const id = currentChannelId();
+        if (!id) return;
+        target.currentSection.hidden = false;
+        target.currentStatus.textContent = "현재 채널 확인 중…";
+        const controller = new AbortController();
+        target.channelController = controller;
+        const current = () =>
+            panel === target &&
+            !controller.signal.aborted &&
+            location.pathname === target.path &&
+            currentChannelId() === id;
+        try {
+            const json = await fetchJson("https://api.chzzk.naver.com/service/v1/channels/" + id, {
+                signal: controller.signal,
+                timeoutMs: 8000,
+            });
+            if (!current()) return;
+            const channel = json?.content;
+            if (
+                json?.code !== 200 ||
+                channel?.channelId !== id ||
+                typeof channel.channelName !== "string" ||
+                !channel.channelName.trim()
+            )
+                throw new Error("Invalid channel response");
+            target.current = {
+                channelId: id,
+                channelName: channel.channelName.trim().slice(0, 100),
+                channelImageUrl: normalizeChzzkImageUrl(channel.channelImageUrl),
+                followerCount: channel.followerCount,
+            };
+            target.currentRow = createRow(target, target.current);
+            target.currentList.append(target.currentRow.node);
+            target.currentStatus.hidden = true;
+            render();
+        } catch (_) {
+            if (current())
+                target.currentStatus.textContent = "현재 채널을 확인하지 못했어요. 채널명으로 검색할 수 있어요.";
+        } finally {
+            if (target.channelController === controller) target.channelController = null;
+        }
+    }
+
+    async function loadFollowing(target) {
+        if (panel !== target || !target.following || target.searching) return;
+        const controller = new AbortController();
+        target.controller = controller;
+        target.results = [];
+        target.searching = true;
+        target.searchError = "";
+        target.limit = 32;
+        render();
+        const current = () =>
+            active && panel === target && target.controller === controller && !controller.signal.aborted;
+        try {
+            const result = await fetchChzzkFollowingChannels({ signal: controller.signal });
+            if (!current()) return;
+            if (result.status === "ok") {
+                target.results = result.channels.map(({ id, name, image }) => ({
+                    channelId: id.toLowerCase(),
+                    channelName: name,
+                    channelImageUrl: image,
+                }));
+            } else
+                target.searchError =
+                    result.status === "login-required"
+                        ? "치지직에 로그인한 뒤 새로고침해 주세요."
+                        : "팔로잉 목록을 불러오지 못했어요. 새로고침해 주세요.";
+        } finally {
+            if (current()) {
+                target.searching = false;
+                target.controller = null;
+                render();
+            }
+        }
+    }
+
+    function setMode(target, following) {
+        if (panel !== target || target.following === following) return;
+        cancelSearch(target);
+        cancelProfiles(target);
+        target.following = following;
+        target.input.value = "";
+        target.searched = false;
+        target.results = [];
+        target.searchError = "";
+        target.label.textContent = following ? "팔로잉 채널 이름" : "채널명 검색";
+        target.input.placeholder = following ? "팔로잉 채널 찾기" : "채널명 입력";
+        target.submit.type = following ? "button" : "submit";
+        target.submit.textContent = following ? "새로고침" : "검색";
+        target.submit.setAttribute("aria-label", target.submit.textContent);
+        target.searchMode.setAttribute("aria-pressed", String(!following));
+        target.followingMode.setAttribute("aria-pressed", String(following));
+        showMessage(target, "");
+        if (following) void loadFollowing(target);
+        else render();
+    }
+
     function render() {
         const target = panel;
         if (!target) return;
         const keyword = target.input.value.trim();
-        const data = keyword ? target.results : channels;
-        target.heading.textContent = keyword ? "검색 결과" : "등록 채널";
+        const filtered = target.following
+            ? target.results.filter((c) =>
+                  c.channelName.toLocaleLowerCase("ko-KR").includes(keyword.toLocaleLowerCase("ko-KR"))
+              )
+            : keyword
+              ? target.results
+              : channels;
+        const data = target.following ? filtered.slice(0, target.limit) : filtered;
+        target.more.hidden = !target.following || data.length === filtered.length;
+        if (target.currentRow) updateRow(target.currentRow, target.current);
+        target.heading.textContent = target.following ? "팔로잉 채널" : keyword ? "검색 결과" : "등록 채널";
         const disabled = ACTIONS.filter((action) => !options[action.option]).map((action) => action.label);
         target.hint.textContent = disabled.length
             ? "전체 " + disabled.join("·") + " 기능 꺼짐. 설정 ‘방송 알림’ 탭에서 켜고 저장 필요."
             : "데스크톱 알림·자동 입장 개별 선택(즉시 저장).";
-        target.submit.disabled = target.searching || !keyword;
+        if (channels.length >= MAX_CHANNELS) target.hint.textContent += ` 등록 한도 ${MAX_CHANNELS}개에 도달했어요.`;
+        target.submit.disabled = target.searching || (!target.following && !keyword);
         target.list.setAttribute("aria-busy", String(target.searching));
         target.empty.textContent =
             loadError ||
             (!ready
                 ? "등록 채널 불러오는 중…"
                 : target.searching
-                  ? "검색 중…"
-                  : keyword
-                    ? target.searchError || (target.searched ? "검색 결과 없음." : "채널명 입력 후 검색 클릭.")
-                    : "등록 채널 없음. 채널명을 검색해 추가.");
+                  ? target.following
+                      ? "팔로잉 목록을 불러오는 중…"
+                      : "검색 중…"
+                  : target.following
+                    ? target.searchError ||
+                      (target.results.length ? "일치하는 팔로잉 채널이 없어요." : "팔로잉한 채널이 없어요.")
+                    : keyword
+                      ? target.searchError || (target.searched ? "검색 결과 없음." : "채널명 입력 후 검색 클릭.")
+                      : "등록 채널 없음. 채널명을 검색해 추가.");
         target.empty.hidden = data.length > 0 && !loadError;
         const ids = new Set(data.map((item) => item.channelId));
         for (const [id, row] of target.rows) {
@@ -281,36 +437,9 @@
                 target.rows.set(channel.channelId, row);
                 target.list.append(row.node);
             }
-            row.name.textContent = channel.channelName || channel.channelId;
-            row.name.title = row.name.textContent;
-            syncAvatar(
-                row,
-                normalizeChzzkImageUrl(channel.channelImageUrl) || profileCache.get(channel.channelId) || ""
-            );
-            const saved = channels.find((item) => item.channelId === channel.channelId);
-            if (!saved && row.remove === document.activeElement) row.restoreFocus = true;
-            row.remove.hidden = !saved;
-            row.remove.disabled = !ready || pending.has(channel.channelId);
-            row.remove.setAttribute("aria-label", (channel.channelName || channel.channelId) + " 등록 해제");
-            row.remove.setAttribute("aria-busy", String(pending.has(channel.channelId)));
-            for (const action of row.actions) {
-                const enabled = saved?.[action.key] === true;
-                action.state.textContent = enabled ? "켬" : "끔";
-                action.toggle.disabled = !ready || pending.has(channel.channelId);
-                action.toggle.setAttribute("aria-pressed", String(enabled));
-                action.toggle.setAttribute("aria-busy", String(pending.has(channel.channelId)));
-                action.toggle.setAttribute(
-                    "aria-label",
-                    (channel.channelName || channel.channelId) + " " + action.label + (enabled ? " 끄기" : " 켜기")
-                );
-            }
-            if (row.restoreFocus && !pending.has(channel.channelId)) {
-                if (document.activeElement === row.remove || document.activeElement === document.body)
-                    row.actions[0].toggle.focus();
-                row.restoreFocus = false;
-            }
+            updateRow(row, channel);
         }
-        if (ready && !keyword) void loadMissingProfiles(target);
+        if (ready && !keyword && !target.following) void loadMissingProfiles(target);
     }
     async function search(target) {
         const keyword = target.input.value.trim();
@@ -399,9 +528,25 @@
             list = el("ul", "bcls-list");
         empty.setAttribute("role", "status");
         list.setAttribute("aria-label", "방송 알림 채널");
+        const currentSection = el("section"),
+            currentStatus = el("p", "bcls-hint"),
+            currentList = el("ul", "bcls-list");
+        currentSection.hidden = true;
+        currentSection.setAttribute("aria-label", "현재 채널");
+        currentStatus.setAttribute("role", "status");
+        currentSection.append(el("h3", "", "현재 채널"), currentStatus, currentList);
+        const modes = el("div", "bcls-modes"),
+            searchMode = button("검색"),
+            followingMode = button("팔로잉"),
+            more = button("더 보기");
+        modes.setAttribute("role", "group");
+        modes.setAttribute("aria-label", "채널 찾기");
+        searchMode.setAttribute("aria-pressed", "true");
+        followingMode.setAttribute("aria-pressed", "false");
+        modes.append(searchMode, followingMode);
         const message = el("p", "bcls-message");
         message.setAttribute("role", "status");
-        node.append(top, hint, form, heading, empty, list, message);
+        node.append(top, hint, currentSection, modes, form, heading, empty, list, more, message);
         const target = {
             node,
             hint,
@@ -411,6 +556,19 @@
             empty,
             list,
             message,
+            path: location.pathname,
+            currentSection,
+            currentStatus,
+            currentList,
+            current: null,
+            currentRow: null,
+            channelController: null,
+            following: false,
+            limit: 32,
+            searchMode,
+            followingMode,
+            label,
+            more,
             rows: new Map(),
             results: [],
             searching: false,
@@ -422,7 +580,22 @@
             profileAttempts: new Set(),
         };
         panel = target;
+        searchMode.addEventListener("click", (event) => {
+            if (event.isTrusted) setMode(target, false);
+        });
+        followingMode.addEventListener("click", (event) => {
+            if (event.isTrusted) setMode(target, true);
+        });
+        more.addEventListener("click", () => {
+            target.limit += 32;
+            render();
+        });
         input.addEventListener("input", () => {
+            if (target.following) {
+                target.limit = 32;
+                render();
+                return;
+            }
             cancelSearch(target);
             cancelProfiles(target);
             target.results = [];
@@ -433,7 +606,11 @@
         });
         form.addEventListener("submit", (event) => {
             event.preventDefault();
-            void search(target);
+            if (!target.following) void search(target);
+        });
+        submit.addEventListener("click", (event) => {
+            if (!target.following) return;
+            if (event.isTrusted) void loadFollowing(target);
         });
         input.addEventListener("keydown", (event) => {
             if (event.key === "Enter" && event.isComposing) event.preventDefault();
@@ -445,6 +622,7 @@
         window.addEventListener("resize", positionPanel);
         window.addEventListener("scroll", positionPanel, true);
         input.focus();
+        void loadCurrentChannel(target);
     }
     function removeEntry() {
         closePanel();
@@ -605,6 +783,7 @@
 #${PANEL_ID} .bcls-top button{display:inline-grid;place-items:center;width:28px;height:28px;min-height:28px;padding:0;border:0;border-radius:var(--bct-radius-sm);background:transparent}
 #${PANEL_ID} .bcls-hint,#${PANEL_ID} .bcls-message{font-size:12px;overflow-wrap:anywhere;margin-top:10px;color:var(--bct-text-body)}
 #${PANEL_ID} .bcls-message:empty{display:none}
+#${PANEL_ID} .bcls-modes{display:flex;gap:6px;margin-top:16px}
 #${PANEL_ID} .bcls-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:16px}
 #${PANEL_ID} .bcls-search label{grid-column:1/-1;font-size:13px;font-weight:600}
 #${PANEL_ID} input{box-sizing:border-box;min-width:0;width:100%;padding:8px 10px;border:1px solid var(--bct-border-strong);border-radius:var(--bct-radius-sm);background:var(--bct-surface-weak);color:inherit;font:inherit}

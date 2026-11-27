@@ -171,6 +171,7 @@ function setup(
     };
     w.HTMLMediaElement.prototype.load = function () {};
     const evalFile = (file) => w.eval(fs.readFileSync(path.join(repo, file), "utf8"));
+    evalFile("shared/chatMultiview.js");
     evalFile("shared/settings.js");
     evalFile("shared/data.js");
     evalFile("content.js");
@@ -5937,4 +5938,489 @@ test("multiview styles take theme colors, radii, shadow and states from the shar
     assert.match(cssRule(css, "#cheese-spanner-multiview .bcmv-controls button::after"), /border-radius:14px/);
     for (const [, value] of css.matchAll(/box-shadow:([^;}]*)/g))
         assert.match(value, /^(?:var\(--bct-shadow\)|none)$/, `shadow ${value}`);
+});
+
+test("an explicit local preset lists candidates without a media request; one selection adds just one muted stream", async (t) => {
+    const h = setup(t);
+    const d = h.w.document;
+    const slots = [
+        { id: A, name: "메인" },
+        { id: B, name: "보조" },
+        { id: C, name: "다음" },
+    ];
+    const commands = [];
+    let saved = slots;
+    let holdRead = false;
+    let finishRead;
+    const sent = h.w.chrome.runtime.sendMessage;
+    h.w.chrome.runtime.sendMessage = (message, callback) => {
+        if (message.type !== "cheese-spanner:live-multiview-preset") return sent(message, callback);
+        commands.push(structuredClone(message));
+        if (holdRead) {
+            finishRead = callback;
+            return;
+        }
+        if (message.action === "save") saved = structuredClone(message.channels);
+        if (message.action === "delete") saved = null;
+        queueMicrotask(() => callback({ ok: true, saved }));
+    };
+    const button = (action) => d.querySelector('[data-action="preset-' + action + '"]');
+    const click = (action) => h.trustedClick(button(action));
+    await h.start();
+    assert.deepEqual(commands, [], "mount is not a preset read");
+    const mediaCount = h.instances.length;
+    const requests = h.requests.length;
+    const session = h.w.sessionStorage.getItem("betterChzzkMultiviewSession");
+    button("open").click();
+    assert.equal(commands.length, 0, "synthetic DOM clicks do not access the profile preset");
+    click("open");
+    await waitForCondition(() => button("add"));
+    const add = [...d.querySelectorAll('[data-action="preset-add"]')];
+    assert.equal(add[0].disabled, true);
+    assert.equal(h.instances.length, mediaCount);
+    assert.equal(h.requests.length, requests);
+    assert.equal(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"), session);
+    assert.deepEqual(
+        commands.map((row) => row.action),
+        ["list"]
+    );
+    h.trustedClick(add[1]);
+    await tick();
+    let current = JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+    assert.deepEqual(
+        current.channels.map((c) => c.id),
+        [A, B]
+    );
+    assert.equal(current.channels[1].muted, true);
+    assert.equal(commands.length, 1, "adding or editing a tab never automatically saves its composition");
+
+    click("save");
+    await waitForCondition(() => button("confirm"));
+    assert.equal(commands.at(-1).action, "list");
+    click("cancel");
+    assert.deepEqual(saved, slots);
+    click("save");
+    await waitForCondition(() => button("confirm"));
+    click("confirm");
+    await waitForCondition(() => commands.at(-1).action === "save" && button("delete"));
+    assert.deepEqual(commands.at(-1).expected, slots);
+    assert.deepEqual(
+        saved.map((c) => c.id),
+        [A, B]
+    );
+    assert(saved.every((c) => Object.keys(c).sort().join(",") === "id,name"));
+    click("delete");
+    click("cancel");
+    assert(saved);
+    click("delete");
+    click("confirm");
+    await waitForCondition(
+        () => !saved && d.querySelector(".bcmv-preset [role=status]").textContent === "저장 목록 삭제 완료."
+    );
+    current = JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+    assert.deepEqual(
+        current.channels.map((c) => c.id),
+        [A, B]
+    );
+
+    holdRead = true;
+    const before = commands.length;
+    click("save");
+    h.click("close-panel");
+    finishRead({ ok: true, saved: null });
+    await tick();
+    assert.equal(commands.length, before + 1, "a late read after closing cannot issue a save");
+});
+
+test("video panel selects only secondary chats, preserves existing cells and opens chat only after confirmation", async (t) => {
+    const key = "betterchzzk:chat-multiview:v1";
+    const occupied = ["c", "d", "e"].map((c) => ({ channelId: c.repeat(32), channelName: c }));
+    const h = setup(t);
+    const model = h.w.CheeseSpannerChatMultiview;
+    const old = { ...JSON.parse(JSON.stringify(model.DEFAULT_CONFIG)), channels: occupied, scale: 120 };
+    h.storage[key] = old;
+    h.evalFile("features/chatMultiview.js");
+    h.setOptions({ chatMultiviewEnabled: true });
+    await h.start();
+    await h.add(B, { keepPanelOpen: true });
+    await h.add(C, { keepPanelOpen: true });
+    const other = "f".repeat(32);
+    await h.add(other, { keepPanelOpen: true });
+    const d = h.w.document;
+    const button = (action) => d.querySelector('[data-action="preset-' + action + '"]');
+    const cells = () => [...d.querySelectorAll("#cheese-spanner-chat-multiview-panel iframe")];
+    const before = h.w.sessionStorage.getItem("betterChzzkMultiviewSession");
+    const requests = h.requests.length;
+    h.trustedClick(button("chat"));
+    const choices = [...d.querySelectorAll('[data-action="preset-chat-select"]')];
+    assert.equal(choices.length, 3, "main is not a candidate");
+    assert(choices[1].disabled, "existing chat stays in place");
+    choices[0].click();
+    assert(button("chat-confirm").disabled, "untrusted selection cannot edit chat");
+    h.trustedClick(choices[0]);
+    assert(choices[2].disabled, "only one vacancy");
+    assert.equal(cells().length, 0);
+    assert.equal(h.requests.length, requests);
+    assert.deepEqual(h.storage[key], old);
+    h.trustedClick(button("chat-confirm"));
+    await waitForCondition(() => cells().length === 4);
+    assert.deepEqual(
+        h.storage[key].channels.map((c) => c.channelId),
+        [C, "d".repeat(32), "e".repeat(32), B]
+    );
+    assert.equal(h.storage[key].scale, 120);
+    assert.deepEqual(
+        cells().map((frame) => frame.src),
+        h.storage[key].channels.map((c) => "https://chzzk.naver.com/live/" + c.channelId + "/chat")
+    );
+    assert.equal(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"), before);
+    assert.equal(h.requests.length, requests);
+    h.w.dispatchEvent(new h.w.Event("pagehide"));
+});
+
+test("a full live layout can inspect a profile list but cannot add another channel", async (t) => {
+    const h = setup(t);
+    await h.start();
+    for (const id of [B, C, "d".repeat(32), "e".repeat(32), "f".repeat(32)]) await h.add(id, { keepPanelOpen: true });
+    const d = h.w.document;
+    const before = h.w.sessionStorage.getItem("betterChzzkMultiviewSession");
+    const other = "0".repeat(32);
+    h.w.CheeseSpanner.utils.runtimeSendMessage = async () => ({ ok: true, saved: [{ id: other, name: "다른 방송" }] });
+    const net = h.requests.length;
+    h.trustedClick(d.querySelector('[data-action="preset-open"]'));
+    await waitForCondition(() => d.querySelector('[data-action="preset-add"]'));
+    const add = d.querySelector('[data-action="preset-add"]');
+    assert.equal(add.textContent, "빈 자리 없음");
+    assert.equal(add.disabled, true);
+    h.trustedClick(add);
+    assert.equal(h.requests.length, net);
+    assert.equal(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"), before);
+});
+
+test("restoring the last removed auxiliary's mix requires its own explicit action in this tab", async (t) => {
+    const h = setup(t);
+    const d = h.w.document;
+    const video = (id) => d.querySelector(`[data-bcmv-channel="${id}"] video`);
+    const control = (action, id) => d.querySelector(`[data-action="${action}"]${id ? `[data-channel="${id}"]` : ""}`);
+    const session = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+    function openAdd() {
+        if (d.querySelector(".bcmv-panel").hidden) h.click("controls");
+        if (!d.querySelector('input[name="liveUrl"]')) h.click("add");
+    }
+    await h.start();
+    await h.add(B);
+    await h.add(C);
+    const main = d.querySelector(".webplayer-internal-video");
+    const other = video(C);
+    const mainMix = [main.volume, main.muted, main.currentTime, main.paused];
+    const otherMix = [other.volume, other.muted, other.currentTime, other.paused];
+
+    for (const muted of [false, true]) {
+        const removed = video(B);
+        removed.volume = 0.46;
+        removed.muted = muted;
+        removed.dispatchEvent(new h.w.Event("volumechange"));
+        h.trustedClick(control("remove", B));
+        assert.equal(
+            session().channels.some((entry) => entry.id === B),
+            false
+        );
+        openAdd();
+        const restore = control("restore-audio");
+        assert.ok(restore);
+        assert.match(restore.textContent, /채널 b.*이전 소리.*46%/);
+        assert.equal(restore.textContent.includes("음소거"), muted);
+        const count = h.requests.length;
+        restore.click();
+        assert.equal(h.requests.length, count);
+        assert.equal(video(B), null);
+        h.trustedClick(restore);
+        await tick();
+        assert.deepEqual([video(B).volume, video(B).muted], [0.46, muted]);
+        assert.deepEqual([main.volume, main.muted, main.currentTime, main.paused], mainMix);
+        assert.deepEqual([other.volume, other.muted, other.currentTime, other.paused], otherMix);
+        assert.equal(h.requests.filter((request) => request.id === B).length, muted ? 3 : 2);
+        assert.deepEqual(h.writes, []);
+        assert.equal(h.w.localStorage.length, 0);
+    }
+
+    h.trustedClick(control("remove", B));
+    const fresh = setup(t, { savedSession: session() });
+    await tick();
+    fresh.click("controls");
+    fresh.click("add");
+    assert.equal(fresh.w.document.querySelector('[data-action="restore-audio"]'), null);
+    await h.add(B);
+    assert.deepEqual([video(B).volume, video(B).muted], [0.3, true]);
+    openAdd();
+    assert.equal(control("restore-audio"), null);
+});
+
+test("removal sound expires and cannot follow a route change or a disabled multiview", async (t) => {
+    const h = setup(t);
+    const d = h.w.document;
+    const restore = () => d.querySelector('[data-action="restore-audio"]');
+    async function removeAndOpen() {
+        await h.add(B);
+        h.trustedClick(d.querySelector(`[data-action="remove"][data-channel="${B}"]`));
+        if (d.querySelector(".bcmv-panel").hidden) h.click("controls");
+        h.click("add");
+        assert.ok(restore());
+    }
+    await h.start();
+    await removeAndOpen();
+    const before = h.requests.length;
+    const now = h.w.Date.now;
+    h.w.Date.now = () => now() + 300001;
+    h.trustedClick(restore());
+    assert.equal(restore(), null);
+    assert.equal(h.requests.length, before);
+    h.w.Date.now = now;
+    await removeAndOpen();
+    const oldButton = restore();
+    h.navigate(C);
+    await tick();
+    h.trustedClick(oldButton);
+    assert.equal(d.querySelector(`[data-bcmv-channel="${B}"]`), null);
+    await removeAndOpen();
+    h.configure(false);
+    h.configure(true);
+    await tick();
+    h.click("controls");
+    h.click("add");
+    assert.equal(restore(), null);
+});
+
+test("only the latest explicitly removed live auxiliary is offered, and stopping or leaving clears it", async (t) => {
+    const h = setup(t);
+    const d = h.w.document;
+    const restore = () => d.querySelector('[data-action="restore-audio"]');
+    const remove = (id) => h.trustedClick(d.querySelector(`[data-action="remove"][data-channel="${id}"]`));
+    function openAdd() {
+        if (d.querySelector(".bcmv-panel").hidden) h.click("controls");
+        if (!d.querySelector('input[name="liveUrl"]')) h.click("add");
+    }
+    await h.start();
+    await h.add(B);
+    await h.add(C);
+    remove(B);
+    openAdd();
+    const old = restore();
+    remove(C);
+    openAdd();
+    assert.equal(restore().dataset.channel, C);
+    h.trustedClick(old);
+    assert.ok(!d.querySelector(`video[data-channel="${B}"]`));
+    d.querySelector("#cheese-spanner-multiview-launcher").click();
+    await h.start();
+    openAdd();
+    assert.equal(restore(), null);
+
+    await h.add(B);
+    remove(B);
+    openAdd();
+    assert.ok(restore());
+    h.w.dispatchEvent(new h.w.PageTransitionEvent("pagehide", { persisted: true }));
+    assert.equal(restore(), null);
+    await h.add(C);
+    h.click("remove", C);
+    openAdd();
+    assert.equal(restore(), null, "a synthetic removal never prepares an audible re-add action");
+});
+
+async function openSoloFixture(t) {
+    const mix = [
+        { id: A, volume: 0.72, muted: false },
+        { id: B, volume: 0.24, muted: false },
+        { id: C, volume: 0.48, muted: true },
+    ];
+    const h = setup(t, { savedSession: { version: 1, active: true, channels: mix } });
+    await tick();
+    const d = h.w.document;
+    const media = (id) =>
+        id === A ? d.querySelector(".webplayer-internal-video") : d.querySelector(`[data-bcmv-channel="${id}"] video`);
+    const control = (action, id) =>
+        d.querySelector(`.bcmv-panel [data-action="${action}"]${id ? `[data-channel="${id}"]` : ""}`);
+    const button = (id) => {
+        if (d.querySelector(".bcmv-panel").hidden) h.click("controls");
+        return control("solo-audio", id);
+    };
+    const ordinary = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession")).channels;
+    const solo = (id) => h.trustedClick(button(id));
+    return { h, d, mix, media, control, button, solo, ordinary };
+}
+
+test("tab audio focus keeps the native mixer untouched, requires a usable side channel and restores even after delayed volumechange", async (t) => {
+    const { h, mix, media, button, solo, ordinary } = await openSoloFixture(t);
+    const before = ordinary(),
+        events = [];
+    for (const id of [A, B, C]) {
+        const video = media(id);
+        for (const field of ["muted", "volume"]) {
+            let current = video[field];
+            Object.defineProperty(video, field, {
+                get: () => current,
+                set(value) {
+                    if (current === value) return;
+                    current = value;
+                    events.push([id, field, value]);
+                    h.w.setTimeout(() => video.dispatchEvent(new h.w.Event("volumechange")), 0);
+                },
+            });
+        }
+    }
+    assert.equal(button(B).disabled, true);
+    assert.match(button(B).title, /메인 소리/);
+    assert.equal(button(C).disabled, true);
+    button(A).click();
+    assert.equal(media(B).muted, false, "untrusted clicks cannot select focus");
+    solo(A);
+    await tick();
+    assert.equal(button(A).getAttribute("aria-pressed"), "true");
+    assert.deepEqual([media(B).muted, media(C).muted], [true, true]);
+    assert.deepEqual(ordinary(), before);
+    solo(A);
+    await tick();
+    assert.deepEqual(
+        mix.map(({ id }) => media(id).muted),
+        [false, false, true]
+    );
+    assert.deepEqual(ordinary(), before);
+    assert(!events.some(([id]) => id === A), "focus cannot write either native main property");
+    media(A).muted = true;
+    await tick();
+    assert.equal(button(B).disabled, false, "already-silent main can stay native");
+    solo(B);
+    await tick();
+    assert.equal(button(B).getAttribute("aria-pressed"), "true");
+    media(A).muted = false;
+    await tick();
+    assert.equal(button(B).getAttribute("aria-pressed"), "false", "a user unmuting the main regains the ordinary mix");
+    assert.deepEqual(ordinary(), before);
+    assert.deepEqual([media(A).volume, media(B).volume, media(C).volume], [0.72, 0.24, 0.48]);
+});
+
+test("tab audio focus switches a running main gate and restores a suppressed auxiliary's original removal mix", async (t) => {
+    const { h, media, button, solo, ordinary, control } = await openSoloFixture(t);
+    const oldMain = media(A);
+    let holder = null,
+        holds = 0,
+        releases = 0;
+    h.w.CheeseSpanner.mainAudioOutput = {
+        available: (v) => v === oldMain,
+        changes: new h.w.EventTarget(),
+        hold: (v, lost) => {
+            assert.equal(v, oldMain);
+            holds++;
+            holder = lost;
+            return () => {
+                holder = null;
+                releases++;
+            };
+        },
+    };
+    const cmd = (id, action) => h.trustedClick(control(action, id));
+    const refresh = () => h.w.CheeseSpanner.mainAudioOutput.changes.dispatchEvent(new h.w.Event("change"));
+    media(C).muted = false;
+    media(C).dispatchEvent(new h.w.Event("volumechange"));
+    refresh();
+    const original = ordinary();
+    solo(B);
+    assert.equal(holds, 1);
+    assert.equal(media(A).muted, false);
+    assert.equal(media(C).muted, true);
+    solo(C);
+    assert.equal(holds, 1);
+    assert.equal(media(B).muted, true);
+    assert.equal(media(C).muted, false);
+    assert.deepEqual(ordinary(), original);
+    const lost = holder;
+    lost();
+    assert.equal(button(C).getAttribute("aria-pressed"), "false");
+    assert.equal(media(B).muted, false);
+    solo(B);
+    assert.equal(media(C).muted, true);
+    cmd(C, "remove");
+    assert.equal(button(B).getAttribute("aria-pressed"), "true");
+    h.click("add");
+    const restore = control("restore-audio");
+    assert(restore);
+    assert.match(restore.textContent, /48%/);
+    assert.doesNotMatch(restore.textContent, /음소거/);
+    h.trustedClick(restore);
+    await tick();
+    assert.equal(media(C).muted, true, "the re-added channel remains suppressed until the listener releases focus");
+    assert.equal(button(B).getAttribute("aria-pressed"), "true");
+    solo(B);
+    assert.equal(media(C).muted, false, "the re-added channel recovers its ordinary unmuted mix on release");
+    assert.deepEqual(
+        ordinary().map((e) => [e.id, e.volume, e.muted]),
+        original.map((e) => [e.id, e.volume, e.muted])
+    );
+    solo(B);
+    h.w.dispatchEvent(new h.w.Event("pagehide"));
+    assert.equal(button(B).getAttribute("aria-pressed"), "false");
+    assert.equal(media(C).muted, false);
+    assert.equal(holds, releases);
+});
+
+test("re-adding an ordinary muted or unavailable auxiliary keeps the selected broadcast playing alone", async (t) => {
+    const { h, media, button, solo, control, ordinary } = await openSoloFixture(t);
+    const storedMix = () => ordinary().map(({ id, volume, muted }) => [id, volume, muted]);
+    const initial = storedMix();
+    solo(A);
+    for (const available of [true, false]) {
+        h.trustedClick(control("remove", C));
+        h.click("add");
+        if (!available) h.w.Hls.isSupported = () => false;
+        h.trustedClick(control("restore-audio"));
+        await tick();
+        assert.equal(button(A).getAttribute("aria-pressed"), "true");
+        assert.equal(media(B).muted, true);
+        assert.equal(media(C).muted, true);
+        assert.deepEqual(storedMix(), initial);
+        if (!available)
+            assert.match(
+                button(C).closest(".bcmv-stream").querySelector("[data-bcmv-status]").textContent,
+                /이 환경에서는 보조 방송 재생 미지원/
+            );
+    }
+    solo(A);
+    assert.equal(media(B).muted, false);
+    assert.equal(media(C).muted, true);
+});
+
+test("lifecycle and explicit volume edits cancel tab audio focus without transferring a held mute to another slot", async (t) => {
+    const { h, media, button, solo, ordinary } = await openSoloFixture(t);
+    const original = ordinary();
+    const native = media(A),
+        aux = media(B);
+    solo(A);
+    assert.equal(aux.muted, true);
+    const d = h.w.document;
+    const volumeButton = d.querySelector(`.bcmv-controls [data-action="mute"][data-channel="${B}"]`);
+    h.trustedClick(volumeButton);
+    assert.equal(button(A).getAttribute("aria-pressed"), "false");
+    assert.equal(aux.muted, false);
+    assert.deepEqual(ordinary(), original);
+    solo(A);
+    const replacement = native.cloneNode(true);
+    native.replaceWith(replacement);
+    await tick();
+    assert.equal(button(A).getAttribute("aria-pressed"), "false");
+    assert.equal(aux.muted, false);
+    solo(A);
+    h.configure(false);
+    assert.equal(aux.muted, false);
+    assert.deepEqual(ordinary(), original);
+    h.configure(true);
+    await tick();
+    assert.equal(button(A).getAttribute("aria-pressed"), "false");
+    assert.equal(media(B).muted, false);
+    assert.deepEqual(ordinary(), original);
+    solo(A);
+    h.navigate(B);
+    await tick();
+    assert.equal(button(B).getAttribute("aria-pressed"), "false");
+    assert(ordinary().filter((entry) => !entry.muted).length >= 1);
 });

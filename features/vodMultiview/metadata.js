@@ -1,7 +1,8 @@
 (() => {
     "use strict";
 
-    const { fetchJson, parseChzzkDate, normalizeChzzkImageUrl } = CheeseSpanner.utils;
+    const { fetchJson, parseChzzkDate, normalizeChzzkImageUrl, readChzzkChannelList, fetchChzzkFollowingChannels } =
+        CheeseSpanner.utils;
     const { readRewindSource } = window.CheeseSpannerVodRewind;
     const api = "https://api.chzzk.naver.com/service";
     const detailUrl = `${api}/v3/videos/`;
@@ -13,7 +14,6 @@
     const channelIdPattern = /^[a-f0-9]{32}$/i;
     const pageSize = 30;
     const maxDetails = 30;
-    const maxFollowingChannels = 505;
 
     function videoNoFromUrl(value) {
         if (typeof value !== "string" || value.length > 2048) return "";
@@ -111,44 +111,11 @@
         }
     }
 
-    function readChannels(items) {
-        const results = new Map();
-        for (const item of items) {
-            const channel = item?.channel;
-            if (!channelIdPattern.test(channel?.channelId || "") || typeof channel.channelName !== "string") continue;
-            const name = channel.channelName.trim().slice(0, 100);
-            if (name && !results.has(channel.channelId))
-                results.set(channel.channelId, {
-                    id: channel.channelId,
-                    name,
-                    image: normalizeChzzkImageUrl(channel.channelImageUrl),
-                });
-        }
-        return [...results.values()];
-    }
-
     async function searchChannels(keyword, { signal }) {
         const params = new URLSearchParams({ keyword, offset: "0", size: "5", withFirstChannelContent: "false" });
         const response = await fetchJson(`${api}/v1/search/channels?${params}`, { signal });
         if (response?.code !== 200 || !Array.isArray(response.content?.data)) throw new Error("Invalid channel search");
-        return readChannels(response.content.data.slice(0, 5));
-    }
-
-    async function loadFollowing({ signal }) {
-        const params = new URLSearchParams({ page: "0", size: maxFollowingChannels, sortType: "FOLLOW" });
-        try {
-            const response = await fetchJson(`${api}/v1/channels/followings?${params}`, { signal });
-            if (response?.code === 401) return { status: "login-required" };
-            if (response?.code !== 200 || !Array.isArray(response.content?.followingList))
-                return { status: "lookup-error" };
-            return {
-                status: "ok",
-                channels: readChannels(response.content.followingList.slice(0, maxFollowingChannels)),
-            };
-        } catch (error) {
-            if (signal?.aborted) throw error;
-            return { status: error?.message === "HTTP 401" ? "login-required" : "lookup-error" };
-        }
+        return readChzzkChannelList(response.content.data.slice(0, 5));
     }
 
     function publishedAt(row) {
@@ -255,7 +222,7 @@
         loadVideo,
         videoNoFromUrl,
         searchChannels,
-        loadFollowing,
+        loadFollowing: fetchChzzkFollowingChannels,
         findReplay,
     });
 })();

@@ -147,6 +147,21 @@
                             선택
                         </button>
                     </div>
+                    <details id="watchPattern" class="history-pattern">
+                        <summary>시청 패턴</summary>
+                        <p id="watchPatternSummary"></p>
+                        <div id="watchPatternCharts" class="history-pattern-charts" hidden>
+                            <section aria-labelledby="weekdayPatternTitle">
+                                <h3 id="weekdayPatternTitle">요일별 시청 시간</h3>
+                                <ul id="watchPatternWeekdays"></ul>
+                            </section>
+                            <section aria-labelledby="hourPatternTitle">
+                                <h3 id="hourPatternTitle">시간대별 시청 시간</h3>
+                                <ul id="watchPatternHours"></ul>
+                            </section>
+                        </div>
+                        <p id="watchPatternNote"></p>
+                    </details>
                     <section
                         id="historyPanel"
                         class="history-panel"
@@ -438,6 +453,7 @@
             <p id="message" class="message hidden" role="status" aria-live="polite"></p>
         </main>
         <script src="shared/data.js"></script>
+        <script src="shared/vodTimeline.js"></script>
         <script src="shared/donationHistory.js"></script>
         <script src="shared/watchHistoryBackup.js"></script>
         <script src="historyBackup.js"></script>

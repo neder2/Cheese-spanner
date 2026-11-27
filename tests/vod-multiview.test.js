@@ -71,7 +71,7 @@ function rewindDetail(
     return response;
 }
 
-function fixture(t) {
+function fixture(t, { captureTrustedClicks = false } = {}) {
     const dom = new JSDOM('<div id="player_layout" class="chzzk_player type_vod"></div>', {
         url: url(1),
         runScripts: "outside-only",
@@ -79,6 +79,15 @@ function fixture(t) {
     });
     const w = dom.window;
     w.Promise.allSettled = undefined;
+    // jsdom clicks are untrusted. Capture the real button callback for explicit-gesture cases only.
+    const clickHandlers = new WeakMap();
+    if (captureTrustedClicks) {
+        const listen = w.HTMLButtonElement.prototype.addEventListener;
+        w.HTMLButtonElement.prototype.addEventListener = function (type, callback, ...options) {
+            if (type === "click") clickHandlers.set(this, callback);
+            return listen.call(this, type, callback, ...options);
+        };
+    }
     const { document } = w;
     const host = document.getElementById("player_layout");
     const files = (names) => {
@@ -356,6 +365,10 @@ function fixture(t) {
         status,
         move,
         byText,
+        trustedClick(button) {
+            assert.ok(clickHandlers.has(button));
+            clickHandlers.get(button).call(button, { target: button, currentTarget: button, isTrusted: true });
+        },
     };
 }
 
@@ -929,7 +942,10 @@ test("compact replay actions retain accessible status and retry without a perman
     assert.equal(mainRow.querySelector(".bcvm-role").textContent, "메인");
     assert.equal(mainRow.querySelector(".bcvm-channel").textContent, "메인 채널");
     assert.equal(mainRow.querySelector(".bcvm-title").textContent, "다시보기 1");
-    assert.equal(mainRow.querySelector("button"), null);
+    const mainActions = mainRow.querySelectorAll("button");
+    assert.equal(mainActions.length, 1);
+    assert.ok(mainActions[0].classList.contains("bcvm-solo"));
+    assert.equal(mainActions[0].getAttribute("aria-disabled"), "true");
     assert.equal(row.querySelector(".bcvm-role").textContent, "서브 1");
     assert.equal(toggle.nextElementSibling, remove);
     assert.equal(remove.textContent, "");
@@ -2227,6 +2243,10 @@ test("replay panel opens with addition collapsed and keeps playback while adding
     const toolbar = f.document.querySelector(TOOLBAR);
     const toggle = toolbar.querySelector(".bcvm-add-toggle");
     const add = f.document.getElementById(toggle.getAttribute("aria-controls"));
+    const empty = toolbar.querySelector(".bcvm-empty");
+    assert.match(empty.textContent, /채널 이름/);
+    const exampleUrl = empty.textContent.match(/https:\/\/[^\s)]+/)?.[0];
+    assert.ok(f.w.CheeseSpanner.vodMultiviewMetadata.videoNoFromUrl(exampleUrl));
     assert.equal(add.hidden, true);
     assert.equal(toggle.getAttribute("aria-expanded"), "false");
     assert.equal(f.document.activeElement, toggle);
@@ -2702,6 +2722,12 @@ test("toggles the controls beside the video and falls back below it when the sid
     const source = sub.srcObject;
     const mainSource = f.main.srcObject;
     assert.equal(sub.paused, false);
+
+    f.w.innerWidth = 420;
+    f.w.dispatchEvent(new f.w.Event("resize"));
+    const left = row.getBoundingClientRect().left + parseFloat(toolbar.style.getPropertyValue("--bcvm-toolbar-left"));
+    assert.ok(left >= row.getBoundingClientRect().left + 8);
+    assert.ok(left + parseFloat(toolbar.style.getPropertyValue("--bcvm-toolbar-width")) <= f.w.innerWidth - 8);
 
     f.w.innerWidth = 900;
     f.w.dispatchEvent(new f.w.Event("resize"));
@@ -3230,4 +3256,363 @@ test("reuses one native slot across 100 additions, removals, option changes and 
     }
     assert.equal(sub.providers.length, 100);
     assert.ok(sub.providers.every((provider) => provider.closed));
+});
+
+test("an explicitly re-added replay mutes both the reused SDK player and its owned media before playback", async (t) => {
+    const f = fixture(t);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const [main, sub] = f.players;
+    const native = [main.srcObject, main.video.currentTime, main.paused, main.video.muted, main.playCalls];
+    const slot = f.w.CheeseSpannerVodNative.getAuxiliaries()[0];
+    for (const muted of [false, true]) {
+        sub.muted = muted;
+        sub.video.muted = muted;
+        const previous = sub.srcObject;
+        f.remove();
+        assert.equal(await slot.idle, true);
+        assert.equal(sub.video.muted, true);
+        f.add(2);
+        await flush();
+        assert.equal(f.w.CheeseSpannerVodNative.getAuxiliaries()[0], slot);
+        assert.notEqual(sub.srcObject, previous);
+        assert.deepEqual([sub.muted, sub.video.muted], [true, true]);
+        sub.loaded(60);
+        sub.seeked();
+        await flush();
+        assert.equal(sub.paused, false);
+        assert.deepEqual([sub.muted, sub.video.muted], [true, true]);
+        assert.deepEqual(
+            [main.srcObject, main.video.currentTime, main.paused, main.video.muted, main.playCalls],
+            native
+        );
+    }
+});
+
+test("only explicitly re-adding the same verified replay restores its mute state at the same volume", async (t) => {
+    const f = fixture(t, { captureTrustedClicks: true });
+    const undo = () => f.document.querySelector(".bcvm-restore-audio");
+    const remove = () => f.trustedClick(f.document.querySelector(".bcvm-remove"));
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const [main, sub] = f.players;
+    const toggle = sub.querySelector(".pzp-pc__volume-button");
+    let muteClicks = 0;
+    toggle.addEventListener("click", () => {
+        muteClicks++;
+        sub.video.muted = sub.muted = !sub.muted;
+    });
+    const native = [main.srcObject, main.video.currentTime, main.video.muted, main.paused, main.playCalls];
+    const ready = async () => {
+        sub.loaded(60);
+        sub.seeked();
+        await flush();
+    };
+    await ready();
+    for (const { muted, before, after, expectedClicks } of [
+        { muted: false, before: 0.62, after: 0.62, expectedClicks: 1 },
+        { muted: true, before: 0.19, after: 0.19, expectedClicks: 0 },
+        { muted: false, before: 0.12, after: 0.97, expectedClicks: 0 },
+    ]) {
+        sub.video.volume = before;
+        sub.video.muted = sub.muted = muted;
+        remove();
+        await flush();
+        const calls = sub.playCalls;
+        const requests = f.requests.length;
+        f.openAdd();
+        assert.equal(undo().hidden, false);
+        assert.ok(undo().textContent.includes("다시보기 2"));
+        undo().click();
+        assert.equal(f.requests.length, requests);
+        assert.equal(sub.playCalls, calls);
+        assert.equal(sub.srcObject, null);
+        const clicks = muteClicks;
+        f.trustedClick(undo());
+        await flush();
+        assert.equal(sub.video.muted, true);
+        sub.video.volume = after;
+        await ready();
+        assert.equal(muteClicks - clicks, expectedClicks);
+        assert.deepEqual([sub.video.muted, sub.muted], [!expectedClicks, !expectedClicks]);
+        assert.deepEqual(
+            [main.srcObject, main.video.currentTime, main.video.muted, main.paused, main.playCalls],
+            native
+        );
+        if (before !== after) assert.match(f.document.querySelector(".bcvm-notice").textContent, /음소거로 추가/);
+    }
+    sub.video.muted = sub.muted = false;
+    remove();
+    await flush();
+    f.add(2);
+    await flush();
+    await ready();
+    assert.equal(sub.muted, true);
+    f.openAdd();
+    assert.equal(undo().hidden, true);
+});
+
+test("mute restore rejects changed metadata, source replacement, ordinary selection and delayed synchronization", async (t) => {
+    for (const mode of [
+        "id",
+        "channel",
+        "timeline",
+        "main",
+        "adjacent",
+        "overlap",
+        "late",
+        "source",
+        "disable",
+        "expiry",
+    ]) {
+        await t.test(mode, async (t) => {
+            const f = fixture(t, { captureTrustedClicks: true });
+            const undo = () => f.document.querySelector(".bcvm-restore-audio");
+            const remove = () => f.trustedClick(f.document.querySelector(".bcvm-remove"));
+            f.apply(true);
+            f.open();
+            f.add(2);
+            await flush();
+            const sub = f.players[1];
+            const ready = async () => {
+                sub.loaded(60);
+                sub.seeked();
+                await flush();
+            };
+            await ready();
+            sub.video.muted = sub.muted = false;
+            let toggles = 0;
+            sub.querySelector(".pzp-pc__volume-button").addEventListener("click", () => {
+                toggles++;
+                sub.video.muted = sub.muted = !sub.muted;
+            });
+            remove();
+            await flush();
+            f.openAdd();
+            assert.equal(undo().hidden, false);
+            if (mode === "source" || mode === "disable" || mode === "expiry") {
+                if (mode === "source") f.main.emit("emptied");
+                if (mode === "disable") {
+                    f.apply(false);
+                    f.apply(true);
+                    f.open();
+                    f.openAdd();
+                }
+                if (mode === "expiry") {
+                    const now = f.w.Date.now;
+                    f.w.Date.now = () => now() + 300001;
+                    f.trustedClick(undo());
+                }
+                assert.equal(undo().hidden, true);
+                assert.equal(sub.srcObject, null);
+                return;
+            }
+            if (mode === "adjacent") {
+                f.add(3);
+                await flush();
+                await ready();
+                assert.equal(sub.muted, true);
+                assert.equal(toggles, 0);
+                return;
+            }
+            if (mode === "id") f.responses.set(2, detail(2, { videoId: "media_changed" }));
+            if (mode === "channel") f.responses.set(2, detail(2, { channel: { channelId: "b".repeat(32) } }));
+            if (mode === "timeline") f.responses.set(2, detail(2, { liveOpenDate: "2026-11-09 20:00:29" }));
+            if (mode === "main") f.responses.set(1, detail(1, { channel: { channelId: "c".repeat(32) } }));
+            if (mode === "overlap") f.move(3);
+            let finish;
+            if (mode === "late") f.responses.set(2, new Promise((resolve) => (finish = resolve)));
+            f.trustedClick(undo());
+            await flush();
+            if (mode === "late") {
+                remove();
+                finish(detail(2));
+                await flush();
+                assert.equal(sub.srcObject, null);
+                assert.equal(toggles, 0);
+                return;
+            }
+            if (mode === "overlap") {
+                assert.equal(sub.srcObject, null);
+                f.move(40);
+                await flush();
+            }
+            await ready();
+            assert.equal(sub.muted, true);
+            assert.equal(toggles, 0);
+        });
+    }
+});
+
+async function prepareSoloReplays(t) {
+    const f = fixture(t, { captureTrustedClicks: true });
+    const owned = new Set();
+    const held = new Map();
+    const changes = new f.w.EventTarget();
+    const output = {
+        changes,
+        available: (video) => owned.has(video),
+        hold(video, lost) {
+            if (!owned.has(video) || held.has(video)) return null;
+            held.set(video, lost);
+            return () => held.delete(video);
+        },
+    };
+    f.w.CheeseSpanner.mainAudioOutput = output;
+    f.apply(true, { audioCompressorEnabled: true });
+    f.open();
+    for (const no of [2, 3]) {
+        f.add(no);
+        await flush();
+        const sub = f.players[no - 1];
+        sub.loaded(60);
+        sub.seeked();
+        await flush();
+    }
+    for (const [index, player] of f.players.entries()) {
+        player.video.muted = player.muted = false;
+        player.video.volume = (index + 1) / 4;
+    }
+    const update = async () => {
+        changes.dispatchEvent(new f.w.Event("change"));
+        await flush();
+    };
+    await update();
+    const button = (index) => f.document.querySelectorAll(`${TOOLBAR} .bcvm-solo`)[index];
+    const mix = () => f.players.map((player) => [player.video.muted, player.video.volume, player.playCalls]);
+    return { f, owned, held, output, update, button, mix };
+}
+
+test("VOD solo holds only already owned non-target outputs and rolls back an interrupted acquisition", async (t) => {
+    const { f, owned, held, output, update, button, mix } = await prepareSoloReplays(t);
+    const [main, first, second] = f.players;
+    owned.add(main.video);
+    const before = mix();
+    await update();
+    const target = button(1);
+    assert.ok(target, "the auxiliary row offers a solo control");
+    f.trustedClick(target);
+    assert.equal(held.size, 0, "an audible peer has no output graph");
+    assert.notEqual(target.getAttribute("aria-pressed"), "true");
+    owned.add(second.video);
+    await update();
+    target.focus();
+    f.trustedClick(target);
+    assert.deepEqual(new Set(held.keys()), new Set([main.video, second.video]));
+    assert.equal(target.getAttribute("aria-pressed"), "true");
+    assert.equal(f.document.activeElement, target);
+    assert.deepEqual(mix(), before);
+    f.trustedClick(target);
+    assert.equal(held.size, 0);
+    assert.equal(target.getAttribute("aria-pressed"), "false");
+    assert.deepEqual(mix(), before);
+
+    // A provider may disappear between checking eligibility and acquiring its output.
+    const originalHold = output.hold;
+    let calls = 0;
+    output.hold = (video, lost) => (++calls === 2 ? null : originalHold(video, lost));
+    f.trustedClick(target);
+    assert.equal(calls, 2);
+    assert.equal(held.size, 0, "the first hold is released when the next provider declines");
+    assert.notEqual(target.getAttribute("aria-pressed"), "true");
+    assert.deepEqual(mix(), before);
+    output.hold = originalHold;
+    first.video.muted = first.muted = true;
+    first.emit("volumechange");
+    await update();
+    const muted = mix();
+    f.trustedClick(target);
+    assert.equal(held.size, 0, "selecting a muted target cannot silence the other playing videos");
+    assert.deepEqual(mix(), muted);
+});
+
+test("VOD solo respects native mute and volume edits, media replacement and option cleanup", async (t) => {
+    const { f, owned, held, update, button, mix } = await prepareSoloReplays(t);
+    const [main, first, second] = f.players;
+    const target = button(1);
+    assert.ok(target);
+    owned.add(main.video);
+    second.video.muted = second.muted = true;
+    second.emit("volumechange");
+    await update();
+    const before = mix();
+    f.trustedClick(target);
+    assert.deepEqual([...held.keys()], [main.video]);
+    assert.equal(target.getAttribute("aria-pressed"), "true");
+    second.video.muted = second.muted = false;
+    second.emit("volumechange");
+    await flush();
+    assert.equal(held.size, 0);
+    assert.equal(target.getAttribute("aria-pressed"), "false");
+    assert.equal(second.video.muted, false, "a user unmute is never undone by focus cleanup");
+    assert.equal(second.playCalls, before[2][2]);
+
+    owned.add(second.video);
+    await update();
+    f.trustedClick(target);
+    assert.equal(held.size, 2);
+    main.video.volume = 0.7;
+    main.emit("volumechange");
+    await flush();
+    assert.equal(held.size, 0);
+    assert.equal(main.video.volume, 0.7);
+    assert.equal(target.getAttribute("aria-pressed"), "false");
+
+    f.trustedClick(target);
+    assert.equal(held.size, 2);
+    first.emit("emptied");
+    await flush();
+    assert.equal(held.size, 0, "a replacement source cannot inherit the old focus");
+    assert.notEqual(target.getAttribute("aria-pressed"), "true");
+    f.apply(false);
+    assert.equal(held.size, 0);
+    assert.equal(f.document.querySelector(".bcvm-solo"), null);
+});
+
+test("VOD solo releases its holds when playback or ownership is interrupted", async (t) => {
+    for (const reason of [
+        "pause",
+        "remove",
+        "same node new src",
+        "same slot next replay",
+        "graph lost",
+        "other graph changed",
+        "hidden",
+        "options off",
+    ]) {
+        await t.test(reason, async (t) => {
+            const { f, owned, held, update, button } = await prepareSoloReplays(t);
+            const [main, target, other] = f.players;
+            owned.add(main.video);
+            owned.add(other.video);
+            await update();
+            f.trustedClick(button(1));
+            assert.equal(held.size, 2);
+            if (reason === "pause") target.pause();
+            if (reason === "remove") f.remove();
+            if (reason === "same node new src") target.video.setAttribute("src", "/next-frame.mp4");
+            if (reason === "same slot next replay") target.shadowRoot.dataset.bcvmVideoNo = "9";
+            if (reason === "other graph changed") await update();
+            if (reason === "graph lost") {
+                const lost = held.get(other.video);
+                held.delete(other.video);
+                owned.delete(other.video);
+                lost();
+            }
+            if (reason === "hidden") {
+                Object.defineProperty(f.document, "hidden", { configurable: true, value: true });
+                f.document.dispatchEvent(new f.w.Event("visibilitychange"));
+            }
+            if (reason === "options off") f.apply(false);
+            await flush();
+            assert.equal(held.size, 0, reason);
+            assert.notEqual(button(1)?.getAttribute("aria-pressed"), "true");
+            assert.equal(main.video.muted, false);
+            assert.equal(main.video.volume, 0.25);
+        });
+    }
 });

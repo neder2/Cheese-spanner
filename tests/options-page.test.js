@@ -1686,3 +1686,36 @@ test("settings search combines words within the same setting in either order", a
     }
     assert.equal(search("videoRecorderFolder autoQualityPreferred"), "0개 항목");
 });
+
+test("compressor presets edit the existing six controls and follow save, discard, custom and disabled states", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const preset = document.getElementById("compressorPreset");
+    const set = (value) => {
+        preset.value = value;
+        dispatch(dom, preset, "change");
+    };
+    const gain = queryOption(document, "audioCompressorMakeupGain");
+    assert.equal(preset.value, "default");
+    set("night");
+    assert.equal(gain.value, "0.6");
+    assert.equal(chrome.testState.sync.audioCompressorMakeupGain, undefined);
+    gain.value = "0.7";
+    dispatch(dom, gain, "input");
+    assert.equal(preset.value, "custom");
+    document.getElementById("discardChanges").click();
+    assert.equal(preset.value, "default");
+    set("light");
+    document.getElementById("save").click();
+    await waitForCondition(() => chrome.testState.sync.audioCompressorRatio === 2);
+    assert.equal(chrome.testState.sync.audioCompressorThreshold, -10);
+    assert.equal(chrome.testState.sync.audioCompressorKnee, 4);
+    assert(!Object.hasOwn(chrome.testState.sync, "compressorPreset"));
+    queryOption(document, "audioCompressorEnabled").click();
+    assert.equal(preset.disabled, true);
+});

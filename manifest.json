@@ -73,6 +73,7 @@
                 "features/skipControl.js",
                 "features/vodBroadcastClock.js",
                 "features/timeMachineLagLabel.js",
+                "features/timeMachineChat.js",
                 "features/livePlayerDisplay.js",
                 "features/playerButtons.js",
                 "features/streamInfoModel.js",
@@ -127,6 +128,7 @@
                 "features/playerZoom.js",
                 "features/ambientGlow.js",
                 "features/videoRecorder.js",
+                "features/videoScreenshot.js",
                 "features/chatMultiview.js",
                 "features/updateGuide.js"
             ],

@@ -73,6 +73,7 @@ const {
     getKstDateKey,
     getKstDateScopeBounds: getDateScopeBounds,
     getKstMonthStartMs,
+    getNextKstDayStartMs,
     getKstParts,
     getUniqueWatchTotals,
     isSameKstDate,
@@ -101,6 +102,7 @@ const {
 } = globalThis.CheeseSpanner?.utils || {};
 
 const noticeEl = document.getElementById("notice");
+const watchPatternEl = document.getElementById("watchPattern");
 const totalWatchTimeEl = document.getElementById("totalWatchTime");
 const totalLiveCountEl = document.getElementById("totalLiveCount");
 const monthWatchTimeEl = document.getElementById("monthWatchTime");
@@ -214,6 +216,7 @@ function matchesHistoryQuery(entry) {
 }
 
 function renderResults() {
+    if (watchPatternEl.open) renderWatchPattern();
     for (const view of viewNames) dirtyHistoryViews.add(view);
     syncHistoryManagementControls();
     renderActiveHistoryView();
@@ -1340,13 +1343,10 @@ function buildEntryChatPanel(entry, counts, panelId) {
         const item = document.createElement("li");
         item.dataset.chatId = String(chat.id);
         item.tabIndex = -1;
-        const time = document.createElement("time");
-        time.className = "history-activity-time";
-        time.dateTime = new Date(chat.at).toISOString();
-        time.textContent = sameDay
+        const label = sameDay
             ? formatKstTime(chat.at, { seconds: true })
             : formatKstDateTime(chat.at, { seconds: true }).slice(5);
-        item.appendChild(time);
+        item.appendChild(createActivityTime(entry, chat.at, label));
         appendText(item, "history-activity-text", String(chat.text || "") || "내용 없는 채팅");
         list.appendChild(item);
     }
@@ -1404,10 +1404,114 @@ function openPendingReplayWindow() {
     }
 }
 
-async function handleTitleClick(event, entry) {
+// Activity times stay local. Only the confirmed segment number and offset go into the opened URL.
+async function resolveActivityReplay(entry, firstVideoNo, at) {
+    const start = parseChzzkDate(entry.liveOpenDate)?.getTime();
+    if (!Number.isSafeInteger(at) || !Number.isFinite(start) || at < start || !entry.channelId) return null;
+    const details = new Map();
+    const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+    async function read(no) {
+        if (details.has(no)) return details.get(no);
+        if (details.size >= 10 || !normalizeChzzkVideoNo(no)) throw new Error("Replay segment limit");
+        const raw = await fetchVideoDetail(no, { signal });
+        if (
+            normalizeChzzkVideoNo(raw?.videoNo) !== no ||
+            raw.videoType !== "REPLAY" ||
+            raw.channel?.channelId !== entry.channelId
+        )
+            throw new Error("Unconfirmed replay");
+        const liveId = pickString(raw.liveId, raw.liveNo, raw.live?.liveId, raw.live?.liveNo);
+        const open = pickVideoStartDateText(raw);
+        if (parseChzzkDate(open)?.getTime() === start && hasConflictingLiveId(entry, { liveId })) {
+            throw new Error("Conflicting broadcast");
+        }
+        // A later publication date is not the end of this media segment.
+        const detail = {
+            videoNo: no,
+            liveOpenDate: open,
+            liveEndDate: pickString(raw.liveEndDate, raw.liveCloseDate),
+            duration: raw.duration,
+            nextVideo: raw.nextVideo,
+            newerVideoNo: normalizeChzzkVideoNo(raw.prevVideo?.videoNo),
+        };
+        details.set(no, detail);
+        return detail;
+    }
+    try {
+        const visited = new Set();
+        let no = firstVideoNo;
+        let previousSegment = "";
+        while (no && !visited.has(no)) {
+            visited.add(no);
+            const detail = await read(no);
+            if (parseChzzkDate(detail.liveOpenDate)?.getTime() !== start) break;
+            const { segmentStartMs, segmentOffsetMs, linkedVideoNos, linkedChainIncomplete } =
+                await CheeseSpanner.vodTimeline.resolveSegmentStartInfo(detail, { fetchDetail: read, signal });
+            const chain = [no, ...linkedVideoNos];
+            const last = details.get(chain.at(-1));
+            // An older neighbour without a length may be an uncounted full segment.
+            const tail = CheeseSpanner.vodTimeline.normalizeVideoDetail(last);
+            if (
+                last?.nextVideo &&
+                (!normalizeChzzkVideoNo(tail.olderVideoNo) || !Number.isFinite(tail.olderDurationSeconds))
+            )
+                break;
+            if (
+                linkedChainIncomplete ||
+                (segmentOffsetMs > 0 && !linkedVideoNos.length) ||
+                (previousSegment && linkedVideoNos[0] !== previousSegment) ||
+                chain.includes(tail.olderVideoNo) ||
+                linkedVideoNos.some((id) => parseChzzkDate(details.get(id)?.liveOpenDate)?.getTime() !== start)
+            )
+                break;
+            const seconds = (at - segmentStartMs) / 1000;
+            if (!Number.isFinite(detail.duration) || detail.duration <= 0) break;
+            if (seconds >= 0 && seconds < detail.duration) {
+                return `https://chzzk.naver.com/video/${no}?currentTime=${Math.floor(seconds)}`;
+            }
+            if (seconds < 0) {
+                previousSegment = "";
+                no = normalizeChzzkVideoNo(linkedVideoNos[0]);
+            } else {
+                const newer = detail.newerVideoNo && (await read(detail.newerVideoNo));
+                if (!newer || normalizeChzzkVideoNo(newer.nextVideo?.videoNo) !== no) break;
+                previousSegment = no;
+                no = newer.videoNo;
+            }
+        }
+    } catch {
+        // Missing details, a broken chain or a timeout leave the ordinary replay link usable.
+    }
+    return null;
+}
+
+function createActivityTime(entry, at, label) {
+    const time = document.createElement("time");
+    if (Number.isSafeInteger(at)) time.dateTime = new Date(at).toISOString();
+    time.textContent = label;
+    const replay = getReplayUrl(entry);
+    const channelsUrl = /^[a-f0-9]{32}$/i.test(entry?.channelId || "")
+        ? `https://chzzk.naver.com/${entry.channelId}/videos`
+        : "";
+    if (!replay && !channelsUrl) {
+        time.className = "history-activity-time";
+        return time;
+    }
+    const link = document.createElement("a");
+    link.className = "history-activity-time history-activity-replay";
+    link.href = replay || channelsUrl;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.title = "활동 시각의 다시보기 열기";
+    link.setAttribute("aria-label", `${label} 활동 시각의 다시보기 열기`);
+    link.addEventListener("click", (event) => handleTitleClick(event, entry, at));
+    link.append(time);
+    return link;
+}
+
+async function handleTitleClick(event, entry, activityAt = null) {
     const replayUrl = getReplayUrl(entry);
-    if (replayUrl) return;
-    if (!entry?.channelId) return;
+    if ((replayUrl && activityAt === null) || !entry?.channelId) return;
 
     event.preventDefault();
     // Enter on the focused link while this record is still being looked up must not open a second waiting tab.
@@ -1440,7 +1544,13 @@ async function handleTitleClick(event, entry) {
             return;
         }
 
-        openUrlInNewTab(`https://chzzk.naver.com/video/${encodeURIComponent(videoNo)}`, pendingWindow);
+        const baseUrl = `https://chzzk.naver.com/video/${encodeURIComponent(videoNo)}`;
+        const position = activityAt === null ? null : await resolveActivityReplay(entry, videoNo, activityAt);
+        openUrlInNewTab(position || baseUrl, pendingWindow);
+        if (replayUrl) {
+            showMessage(position ? "활동 시각의 다시보기 열림" : "시각을 확인할 수 없어 다시보기 기본 위치로 이동");
+            return;
+        }
         try {
             await persistReplayVideoNo(entry, videoNo);
             showMessage("다시보기 링크 확인");
@@ -1903,11 +2013,16 @@ function renderList() {
                 focusTarget = chatPanel.querySelector(".history-entry-chat-more") || chatButton;
             else if (active.matches(".history-entry-chat-list"))
                 focusTarget = chatPanel.querySelector("ol") || chatButton;
-            else if (focusedChatId)
+            else if (focusedChatId) {
+                const chatRow = Array.from(chatPanel.querySelectorAll("[data-chat-id]")).find(
+                    (row) => row.dataset.chatId === focusedChatId
+                );
                 focusTarget =
-                    Array.from(chatPanel.querySelectorAll("[data-chat-id]")).find(
-                        (row) => row.dataset.chatId === focusedChatId
-                    ) || chatButton;
+                    (active.matches(".history-activity-replay") &&
+                        chatRow?.querySelector(".history-activity-replay")) ||
+                    chatRow ||
+                    chatButton;
+            }
         }
         const detailPanel = document.createElement("section");
         detailPanel.id = detailPanelId;
@@ -1931,6 +2046,144 @@ function renderList() {
     }
     if (hadListFocus) (focusTarget || historySearchEl).focus({ preventScroll: true });
     requestChannelIcons(historyListEl);
+}
+
+// Only recorded intervals can locate watch time within a KST day. Entry/exit
+// timestamps can span pauses and are never used to fill in a missing interval.
+function getWatchPattern(rows, { startMs, endMs }) {
+    const weekdays = Array(7).fill(0);
+    const hours = Array(4).fill(0);
+    const allRanges = [];
+    let unknownWeekday = 0;
+    let unknownHour = 0;
+    let liveCount = 0;
+    let hasUndated = false;
+    const allTime = startMs === -Infinity && endMs === Infinity;
+    for (const entry of rows) {
+        const ranges = getRecordedEntryRangesForScope(entry, startMs, endMs);
+        const exactDaily = {};
+        let exactSeconds = 0;
+        for (const range of ranges) {
+            allRanges.push(range);
+            // These clipped ranges are already disjoint within the broadcast.
+            // A union of individually valid sessions may span more than a year.
+            let cursor = range.startAt;
+            while (cursor < range.endAt) {
+                const date = getKstDateKey(cursor);
+                const end = Math.min(range.endAt, getNextKstDayStartMs(cursor));
+                const seconds = (end - cursor) / 1000;
+                exactDaily[date] = (exactDaily[date] || 0) + seconds;
+                exactSeconds += seconds;
+                cursor = end;
+            }
+        }
+        const datedResidual = Array(7).fill(0);
+        let datedTotal = 0;
+        let scopedDates = 0;
+        for (const [date, seconds] of Object.entries(entry.dailySeconds)) {
+            const day = getDateScopeBounds(date);
+            if (!day || getKstDateKey(day.startMs) !== date || !Number.isFinite(seconds) || seconds <= 0) continue;
+            datedTotal += seconds;
+            if (day.startMs < startMs || day.endMs > endMs) continue;
+            scopedDates += seconds;
+            datedResidual[getKstParts(day.startMs).weekday] += Math.max(0, seconds - (exactDaily[date] || 0));
+        }
+        if (entry.watchedSeconds > datedTotal + 0.001) hasUndated = true;
+        const total = allTime && Number.isFinite(entry.watchedSeconds) ? entry.watchedSeconds : scopedDates;
+        const residual = Math.max(0, total - exactSeconds);
+        if (exactSeconds || residual) liveCount++;
+        unknownHour += residual;
+        const residualWithDate = datedResidual.reduce((sum, value) => sum + value, 0);
+        // Conflicting old date totals cannot identify which days own the residual.
+        if (residualWithDate <= residual + 0.001) {
+            datedResidual.forEach((seconds, day) => (weekdays[day] += seconds));
+            unknownWeekday += Math.max(0, residual - residualWithDate);
+        } else {
+            unknownWeekday += residual;
+        }
+    }
+    let exact = 0;
+    for (const { startAt, endAt } of mergeWatchRanges(allRanges, 0)) {
+        let cursor = startAt;
+        while (cursor < endAt) {
+            const { hours: hour, weekday } = getKstParts(cursor);
+            const band = Math.floor(hour / 6);
+            const day = getDateScopeBounds(getKstDateKey(cursor));
+            const end = Math.min(endAt, day.startMs + (band + 1) * (DAY_MS / 4));
+            const seconds = (end - cursor) / 1000;
+            weekdays[weekday] += seconds;
+            hours[band] += seconds;
+            exact += seconds;
+            cursor = end;
+        }
+    }
+    return { weekdays, hours, unknownWeekday, unknownHour, total: exact + unknownHour, liveCount, hasUndated };
+}
+
+function formatPatternDuration(seconds) {
+    if (seconds > 0 && seconds < 1) return "1초 미만";
+    const n = Math.floor(seconds);
+    const parts = [];
+    if (n >= 3600) parts.push(Math.floor(n / 3600).toLocaleString() + "시간");
+    if (Math.floor(n / 60) % 60) parts.push((Math.floor(n / 60) % 60) + "분");
+    if (n % 60 || !parts.length) parts.push((n % 60) + "초");
+    return parts.join(" ");
+}
+
+function renderWatchPattern() {
+    const pattern = getWatchPattern(entries.filter(matchesHistoryQuery), getHistoryScopeBounds());
+    const period = getScopeLabel();
+    const hasTime = pattern.total > 0;
+    document.getElementById("watchPatternSummary").textContent = hasTime
+        ? `${period} · 라이브 ${pattern.liveCount.toLocaleString()}개 · 시청 ${formatPatternDuration(pattern.total)}`
+        : `${period} · 선택한 조건의 시청 기록 없음`;
+    document.getElementById("watchPatternCharts").hidden = !hasTime;
+    const notes = [];
+    if (hasTime) notes.push("한국 시간(KST) · 비율은 선택한 기록의 총 시청 시간 기준");
+    if (pattern.unknownHour) notes.push("구간 없는 누적 시간은 시간대 미상에 포함 · 동시 시청 여부 확인 불가");
+    if (pattern.unknownWeekday) notes.push("요일 미상은 날짜가 없거나 일별 합계가 맞지 않는 시간");
+    if (pattern.hasUndated && historyScopeEl.value !== "all") notes.push("날짜가 없는 시간은 전체 기간에만 포함");
+    document.getElementById("watchPatternNote").textContent = notes.join("\n");
+
+    function renderBuckets(id, labels, seconds, unknownLabel, unknown) {
+        const list = document.getElementById(id);
+        const fragment = document.createDocumentFragment();
+        const buckets = labels.map((label, index) => [label, seconds[index]]);
+        if (unknown > 0) buckets.push([unknownLabel, unknown]);
+        if (hasTime) {
+            for (const [label, amount] of buckets) {
+                const li = document.createElement("li");
+                const share = Math.min(1, amount / pattern.total);
+                const percent =
+                    share > 0 && share < 0.001
+                        ? "0.1% 미만"
+                        : (share * 100).toLocaleString("ko-KR", { maximumFractionDigits: 1 }) + "%";
+                appendText(li, "history-pattern-label", label);
+                appendText(li, "history-pattern-value", `${formatPatternDuration(amount)} · ${percent}`);
+                const bar = document.createElement("progress");
+                bar.max = 1;
+                bar.value = share;
+                bar.setAttribute("aria-hidden", "true");
+                li.appendChild(bar);
+                fragment.appendChild(li);
+            }
+        }
+        list.replaceChildren(fragment);
+    }
+    renderBuckets(
+        "watchPatternWeekdays",
+        WEEKDAY_LABELS.map((day) => day + "요일"),
+        pattern.weekdays,
+        "요일 미상",
+        pattern.unknownWeekday
+    );
+    renderBuckets(
+        "watchPatternHours",
+        ["00–06시", "06–12시", "12–18시", "18–24시"],
+        pattern.hours,
+        "시간대 미상",
+        pattern.unknownHour
+    );
 }
 
 function renderSummary() {
@@ -2020,7 +2273,7 @@ function getDonationView() {
                 activity.at <= cutoff &&
                 String(activity.id || "").startsWith(`${importedDonations.owner}:`);
             if (covered) continue;
-            rows.push({ ...activity, channelId: entry.channelId, channelName: entry.channelName });
+            rows.push({ ...activity, entry, channelId: entry.channelId, channelName: entry.channelName });
             const daily = retained.get(date) || { count: 0, amount: 0 };
             daily.count++;
             daily.amount += activity.amount;
@@ -2139,11 +2392,7 @@ function appendActivityRows(fragment, rows) {
         }
         const line = document.createElement("div");
         line.className = "history-activity-line";
-        const time = document.createElement("time");
-        time.className = "history-activity-time";
-        if (Number.isFinite(row.at)) time.dateTime = new Date(row.at).toISOString();
-        time.textContent = formatKstDateTime(row.at, { seconds: true });
-        line.appendChild(time);
+        line.appendChild(createActivityTime(row.entry, row.at, formatKstDateTime(row.at, { seconds: true })));
         appendText(line, "history-activity-text", row.text);
         if (row.amount !== undefined) {
             appendText(line, "history-ranking-time", `${Number(row.amount).toLocaleString()}치즈`);
@@ -2178,6 +2427,7 @@ function renderActivity(donations) {
             fragment,
             getPageRows("activity", donations.rows).map((row) => ({
                 group: row.channelId || row.channelName,
+                entry: row.entry,
                 channelId: row.channelId,
                 channelName: row.channelName,
                 at: row.at,
@@ -2215,6 +2465,7 @@ function renderActivity(donations) {
         fragment,
         getPageRows("activity", rows).map(({ entry, activity }) => ({
             group: entry.id,
+            entry,
             channelId: entry.channelId,
             channelName: entry.channelName,
             title: entry.title,
@@ -2406,6 +2657,9 @@ nextMonthButton.addEventListener("click", () => {
 });
 refreshButton.addEventListener("click", refreshHistory);
 clearHistoryButton.addEventListener("click", clearHistory);
+watchPatternEl.addEventListener("toggle", () => {
+    if (watchPatternEl.open) renderWatchPattern();
+});
 historySearchEl.addEventListener("input", () => {
     resetViewPages();
     renderResults();

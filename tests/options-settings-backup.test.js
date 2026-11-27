@@ -123,7 +123,7 @@ test("export downloads the worker's file and import shows a preview before any w
     assert.deepEqual(plain(h.backupMessages[0]), { type: BACKUP, version: 1, action: "export" });
     assert.match(h.downloads[0].name, /^cheese-spanner-settings-\d{8}-\d{4}\.json$/);
     assert.equal(JSON.parse(await h.downloads[0].blob.text()).kind, "cheese-spanner.settings-backup");
-    assert.match(h.message(), /시청 기록·로그인 정보 제외/);
+    assert.match(h.message(), /시청 기록, 카테고리·태그 제외 목록, 로그인 정보는 파일에서 제외/);
 
     const toggle = queryOption(h.document, "chatTimestampEnabled");
     toggle.checked = !toggle.checked;
@@ -150,6 +150,7 @@ test("export downloads the worker's file and import shows a preview before any w
     assert.match(text, /settings\.json/);
     assert.match(text, /파일 5개 중 2개 바뀜/);
     assert.match(text, /방송 알림 대상1개 채널 · 바뀜/);
+    assert.match(text, /시청 기록, 카테고리·태그 제외 목록, 로그인 정보는 현재 값 유지/);
     assert.match(text, /이 버전에서 지원하지 않는 옵션 1개 제외/);
     assert.match(text, /진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기 적용/);
     assert.equal(h.chrome.testState.sync.chatPosition, undefined, "previewing writes nothing");
@@ -584,6 +585,7 @@ test("an export that leaves out a section names it and the reason", async (t) =>
     });
     h.document.getElementById("exportSettingsFile").click();
     await waitForCondition(() => h.downloads[0]?.name);
+    assert.match(h.message(), /시청 기록, 카테고리·태그 제외 목록, 로그인 정보는 파일에서 제외/);
     assert.match(h.message(), /저장값을 읽지 못한 구역 제외: 팔로잉 고정/);
     const max = h.dom.window.CheeseSpannerSettingsBackup.MAX_MULTIVIEW_CHANNELS.toLocaleString("ko-KR");
     assert.ok(h.message().includes(`멀티뷰 화질 구역 제외: 저장 채널 ${max}개 한도 초과`));
@@ -667,4 +669,45 @@ test("a re-confirmation that leaves nothing to change disables applying and says
     h.panel.querySelector(".primary-button").click();
     await waitForCondition(() => h.panel.hidden);
     assert.equal(h.backupMessages.at(-1).fingerprint, "fp-4");
+});
+
+test("exclusion file choices are explicit for each export and each import preview", async (t) => {
+    const h = await setup(t);
+    const listFile = {
+        ...fileValue,
+        formatVersion: 2,
+        local: { categoryExclusions: [{ categoryType: "GAME", categoryId: "fixture", categoryValue: "예시" }] },
+    };
+    const choice = h.document.getElementById("exportCategoryExclusions");
+    assert.equal(choice.checked, false);
+    choice.click();
+    h.replies.push({ ok: true, backup: listFile, omitted: [] });
+    h.document.getElementById("exportSettingsFile").click();
+    await waitForCondition(() => h.downloads[0]?.name);
+    assert.equal(h.backupMessages.at(-1).includeExclusions, true);
+    assert.equal(choice.checked, false);
+    assert.match(h.message(), /제외 목록 포함/);
+    h.replies.push({ ok: true, fingerprint: "off", changes: 0, summary: summary() });
+    await h.chooseFile(listFile);
+    await waitForCondition(() => !h.panel.hidden);
+    assert.equal(h.document.getElementById("message").classList.contains("hidden"), true);
+    assert.equal(h.document.getElementById("mergeCategoryExclusions").checked, false);
+    assert.equal(h.panel.querySelector(".primary-button").disabled, true);
+    h.replies.push({
+        ok: true,
+        fingerprint: "on",
+        changes: 1,
+        summary: summary({ categoryExclusions: { current: 3, added: 1, duplicates: 0 } }),
+    });
+    h.document.getElementById("mergeCategoryExclusions").click();
+    await waitForCondition(() => h.panel.textContent.includes("새로 추가 1개"));
+    assert.match(h.panel.textContent, /기존 3개 유지/);
+    assert.equal(h.document.activeElement.id, "mergeCategoryExclusions");
+    h.replies.push({ ok: true, result: { status: "applied", summary: summary() } });
+    h.panel.querySelector(".primary-button").click();
+    await waitForCondition(() => h.panel.hidden);
+    const applied = h.backupMessages.at(-1);
+    assert.equal(applied.action, "apply");
+    assert.equal(applied.includeExclusions, true);
+    assert.equal(applied.fingerprint, "on");
 });

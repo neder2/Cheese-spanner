@@ -322,6 +322,77 @@
     overflow-wrap: anywhere;
 }
 
+/* Watch patterns use the same search and period as the record browser. */
+.history-pattern {
+    margin-block: 12px;
+    padding-block: 10px;
+    border-block: 1px solid var(--border);
+}
+.history-pattern summary {
+    width: fit-content;
+    cursor: pointer;
+    font-weight: 650;
+}
+.history-pattern p {
+    margin: 10px 0 0;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+#watchPatternNote {
+    white-space: pre-line;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+}
+.history-pattern p:empty {
+    display: none;
+}
+.history-pattern-charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 14px 24px;
+    margin-block-start: 14px;
+}
+.history-pattern-charts h3 {
+    margin: 0 0 8px;
+    font-size: 14px;
+}
+.history-pattern-charts ul {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.history-pattern-charts li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 2px 8px;
+    font-size: 12px;
+}
+.history-pattern-value {
+    text-align: end;
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+}
+.history-pattern progress {
+    grid-column: 1 / -1;
+    width: 100%;
+    height: 4px;
+    appearance: none;
+    border: 0;
+    border-radius: 2px;
+    background: var(--surface-3);
+}
+.history-pattern progress::-webkit-progress-bar {
+    border-radius: inherit;
+    background: var(--surface-3);
+}
+.history-pattern progress::-webkit-progress-value {
+    border-radius: inherit;
+    background: var(--accent-text);
+}
+
 /* Record browser */
 .history-browser {
     container-type: inline-size;
@@ -724,6 +795,12 @@
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+}
+
+.history-activity-replay {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
 }
 
 .history-page :is(.history-entry-chat-list, .history-activity-line) .history-activity-text {

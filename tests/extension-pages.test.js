@@ -3015,6 +3015,53 @@ test("volume wheel removes the page wheel listener after pushState leaves playba
     assert.equal(dom.window.location.pathname, "/following");
 });
 
+test("a delayed volume wheel frame preserves the next volume after disabling or changing playback routes", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        '<div class="pzp-pc"><video></video><button class="pzp-pc__volume-button">Volume</button></div>',
+        "https://chzzk.naver.com/video/1",
+        chrome
+    );
+    const { window } = dom;
+    const video = window.document.querySelector("video");
+    const button = window.document.querySelector("button");
+    makeVisibleVideo(video);
+    button.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+    evalVolumeWheelScripts(dom);
+    await waitForAsyncCallbacks();
+
+    let delayedFrame;
+    window.requestAnimationFrame = (callback) => {
+        delayedFrame = callback;
+        return 1;
+    };
+    function wheel() {
+        delayedFrame = null;
+        video.volume = 0.5;
+        button.dispatchEvent(new window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 }));
+        assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+        assert.equal(typeof delayedFrame, "function");
+    }
+
+    wheel();
+    for (const enabled of [false, true]) {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ volumeWheelEnabled: { newValue: enabled } }, "sync");
+        }
+    }
+    video.volume = 0.25;
+    delayedFrame();
+    await waitForAsyncCallbacks();
+    assert.equal(video.volume, 0.25, "turning the option back on must not revive a pending commit");
+
+    wheel();
+    window.history.pushState({}, "", "/video/2");
+    video.volume = 0.75;
+    delayedFrame();
+    await waitForAsyncCallbacks();
+    assert.equal(video.volume, 0.75, "a reused player on another route owns its own volume");
+});
+
 test("volume wheel respects unit-range native sliders", async () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
@@ -4444,6 +4491,38 @@ async function createLiveWatchFixture(t, sync = {}) {
     const entry = () => chrome.testState.local.betterChzzkLiveWatchHistory?.entries?.["live:broadcast-a"];
     return { chrome, clock, dom, video, state, play, watch, tick, flush, entry };
 }
+
+test("live watch history counts partial progress before a delayed waiting event at each playback rate", async (t) => {
+    const f = await createLiveWatchFixture(t);
+    f.watch(60);
+    let rate = 1;
+    Object.defineProperty(f.video, "playbackRate", { configurable: true, get: () => rate });
+    // Five seconds elapse but only one second plays.
+    f.play(1);
+    f.state.nowMs += 4000;
+    f.clock.advance(4000);
+    f.video.dispatchEvent(new f.dom.window.Event("waiting"));
+    await waitForCondition(() => f.entry()?.watchedSeconds === 61);
+    // Rate changes at the end of two seconds of normal playback. Apply the old rate to those two seconds.
+    f.play(2);
+    rate = 2;
+    f.video.dispatchEvent(new f.dom.window.Event("ratechange"));
+    f.play(5);
+    f.state.mediaTime -= 3; // Two media seconds at 2x, followed by four wall seconds stalled.
+    f.tick();
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds === 64);
+    // A forward seek and its wait do not contribute. After seeking, 2x playback resumes.
+    f.state.mediaTime += 120;
+    f.video.dispatchEvent(new f.dom.window.Event("seeking"));
+    f.state.nowMs += 2000;
+    f.clock.advance(2000);
+    f.video.dispatchEvent(new f.dom.window.Event("seeked"));
+    f.play(2);
+    f.state.mediaTime += 2;
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds === 66);
+});
 
 for (const stop of ["pause", "ended"]) {
     test(`live watch history counts the seconds played between the last tick and ${stop}`, async (t) => {

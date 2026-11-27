@@ -23,6 +23,8 @@
         previewHosts: { origins: ["https://*.pstatic.net/*"] },
     };
     const ERROR_TEXT = {
+        "exclusions-limit": "현재 목록과 합치면 100개 한도 초과. 제외 목록을 빼고 적용 가능.",
+        "invalid-stored-exclusions": "현재 제외 목록을 읽을 수 없어 합치기 중단",
         "multiview-limit": "멀티뷰 채널별 설정은 화질과 딜레이 각각 최대 4,000개까지 저장 가능",
         "invalid-file": "치즈 스패너 설정 파일이 아니거나 내용에 오류가 있음",
         "invalid-json": "JSON 형식의 설정 파일 필요",
@@ -35,6 +37,7 @@
     };
     const SECTION_TEXT = {
         options: "옵션",
+        categoryExclusions: "카테고리·태그 제외 목록",
         pinnedChannelIds: "팔로잉 고정",
         followingFolders: "팔로잉 폴더",
         panelSizes: "채팅·사이드바 크기",
@@ -43,6 +46,7 @@
         chatMultiview: "채팅 멀티뷰 구성",
     };
     const OMITTED_TEXT = {
+        categoryExclusions: "카테고리·태그 제외 목록",
         pinnedChannelIds: "팔로잉 고정",
         followingFolders: "팔로잉 폴더",
         liveStartChannels: "방송 알림 대상",
@@ -64,6 +68,20 @@
     };
     let current = null;
     let busy = false;
+    const exportChoice = checkbox("카테고리·태그 제외 목록도 파일에 포함");
+    exportChoice.input.id = "exportCategoryExclusions";
+    exportButton.before(exportChoice.label);
+    headerMenu?.addEventListener("toggle", () => {
+        if (!headerMenu.open) exportChoice.input.checked = false;
+    });
+
+    function checkbox(text) {
+        const label = el("label", "backup-choice");
+        const input = el("input");
+        input.type = "checkbox";
+        label.append(input, document.createTextNode(text));
+        return { label, input };
+    }
 
     function failure(code) {
         const error = new Error(code);
@@ -102,6 +120,9 @@
     function setBusy(value) {
         busy = value;
         exportButton.disabled = value;
+        exportChoice.input.disabled = value;
+        const choice = panel.querySelector("input");
+        if (choice) choice.disabled = value;
         importButton.disabled = value;
         // A button that has nothing to do (apply with no changes) stays off after the busy state ends.
         for (const button of panel.querySelectorAll("button"))
@@ -183,6 +204,13 @@
                 "채팅 멀티뷰 구성",
                 `${summary.chatMultiview.count}개 채널 · ${state(summary.chatMultiview.changed)}`,
             ]);
+        if (summary.categoryExclusions) {
+            const { current, added, duplicates } = summary.categoryExclusions;
+            rows.push([
+                "카테고리·태그 제외 목록",
+                `기존 ${current}개 유지 · 새로 추가 ${added}개 · 중복 ${duplicates}개`,
+            ]);
+        }
         return rows;
     }
 
@@ -218,7 +246,13 @@
         const notes = el("ul", "settings-backup-notes");
         notes.append(
             el("li", "", "파일에 없는 구역은 현재 설정 유지. 멀티뷰는 파일에 있는 채널만 변경."),
-            el("li", "", "시청 기록·카테고리 제외·로그인 정보 유지"),
+            el(
+                "li",
+                "",
+                current.includeExclusions
+                    ? "시청 기록, 로그인 정보는 현재 값 유지"
+                    : "시청 기록, 카테고리·태그 제외 목록, 로그인 정보는 현재 값 유지"
+            ),
             el("li", "", "진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기 적용")
         );
         if (preview.ignoredOptionKeys?.length)
@@ -246,10 +280,44 @@
         apply.disabled = busy || preview.changes === 0;
         const cancel = button("취소", "secondary-button", () => closePanel({ restoreFocus: true }));
         actions.append(apply, cancel);
-        panel.append(heading, meta, list, notes, status, actions);
+        panel.append(heading, meta);
+        if (Array.isArray(current.backup?.local?.categoryExclusions)) {
+            const choice = checkbox(
+                `카테고리·태그 제외 목록 ${current.backup.local.categoryExclusions.length}개 합치기`
+            );
+            choice.input.id = "mergeCategoryExclusions";
+            choice.input.checked = Boolean(current.includeExclusions);
+            choice.input.addEventListener("change", () => void previewExclusions(choice.input));
+            panel.append(choice.label);
+        }
+        panel.append(list, notes, status, actions);
         if (preview.changes === 0) setStatus("현재 설정과 같아 변경 사항 없음");
         panel.hidden = false;
         heading.focus({ preventScroll: false });
+    }
+
+    async function previewExclusions(input) {
+        const flow = current;
+        const selected = input.checked;
+        setBusy(true);
+        try {
+            const preview = await send({
+                action: "preview",
+                backup: flow.backup,
+                includeExclusions: selected,
+                disabledOptionKeys: flow.disabledOptionKeys,
+            });
+            if (current !== flow) return;
+            flow.includeExclusions = selected;
+            flow.preview = preview;
+            render();
+        } catch (error) {
+            input.checked = Boolean(flow.includeExclusions);
+            setStatus(errorText(error), "error");
+        } finally {
+            setBusy(false);
+            panel.querySelector("#mergeCategoryExclusions")?.focus();
+        }
     }
 
     // The request bundles every needed permission and fails as a whole; a permission already held is not denied.
@@ -341,6 +409,7 @@
                 action: "apply",
                 backup: flow.backup,
                 fingerprint: flow.preview.fingerprint,
+                ...(flow.includeExclusions ? { includeExclusions: true } : {}),
                 ...(disabledOptionKeys.length ? { disabledOptionKeys } : {}),
             });
             if (current !== flow) return;
@@ -397,12 +466,15 @@
         );
     }
 
-    function exportMessage(omitted) {
-        if (!omitted.length) return "설정 파일 생성 완료. 시청 기록·로그인 정보 제외.";
+    function exportMessage(omitted, included) {
+        const parts = [
+            included
+                ? "설정 파일 생성 완료. 카테고리·태그 제외 목록 포함. 시청 기록, 로그인 정보는 파일에서 제외."
+                : "설정 파일 생성 완료. 시청 기록, 카테고리·태그 제외 목록, 로그인 정보는 파일에서 제외.",
+        ];
         const names = (list) => list.map((name) => OMITTED_TEXT[name] || "기타").join("·");
         const tooMany = omitted.filter((name) => name === "multiviewDelays" || name === "multiviewQualities");
         const unreadable = omitted.filter((name) => !tooMany.includes(name));
-        const parts = ["설정 파일 생성 완료."];
         if (unreadable.length) parts.push(`저장값을 읽지 못한 구역 제외: ${names(unreadable)}.`);
         if (tooMany.length)
             parts.push(
@@ -415,12 +487,19 @@
 
     exportButton.addEventListener("click", async () => {
         if (busy) return;
+        const includeExclusions = exportChoice.input.checked;
+        exportChoice.input.checked = false;
         closeMenu();
         setBusy(true);
         try {
-            const response = await send({ action: "export" });
+            const response = await send({
+                action: "export",
+                ...(includeExclusions ? { includeExclusions: true } : {}),
+            });
             const text = JSON.stringify(response.backup, null, 2);
-            const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+            const blob = new Blob([text], { type: "application/json" });
+            if (blob.size > catalog.MAX_FILE_BYTES) throw failure("too-large");
+            const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
             link.href = url;
             link.download = `cheese-spanner-settings-${stamp(response.backup.createdAt)}.json`;
@@ -428,7 +507,9 @@
             link.click();
             link.remove();
             setTimeout(() => URL.revokeObjectURL(url), 60000);
-            page.showMessage(exportMessage(response.omitted || []));
+            page.showMessage(
+                exportMessage(response.omitted || [], Array.isArray(response.backup.local?.categoryExclusions))
+            );
         } catch (error) {
             page.showMessage(errorText(error), "error");
         } finally {
@@ -459,6 +540,7 @@
             page.showMessage("저장하지 않은 변경 사항을 저장하거나 되돌린 뒤 불러오기", "error");
             return;
         }
+        page.hideMessage();
         page.setExternalBusy(true);
         setBusy(true);
         try {

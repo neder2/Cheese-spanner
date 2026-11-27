@@ -658,8 +658,8 @@ test("audio compressor preserves its graph across SPA mini-player reparenting, r
         connect(node) {
             this.connections.push(node);
         }
-        disconnect() {
-            this.connections = [];
+        disconnect(target) {
+            this.connections = target ? this.connections.filter((node) => node !== target) : [];
         }
     }
     class FakeParam {
@@ -737,6 +737,13 @@ test("audio compressor preserves its graph across SPA mini-player reparenting, r
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForCondition(() => document.getElementById("cheese-spanner-audio-compressor"));
 
+    const output = dom.window.CheeseSpanner.mainAudioOutput;
+    assert.equal(output.available(video), false);
+    assert.equal(
+        output.hold(video, () => {}),
+        null
+    );
+    assert.equal(contexts.length, 0, "requesting focus cannot create the first context or source");
     clickCompressor(document.getElementById("cheese-spanner-audio-compressor"));
     assert.equal(contexts.length, 1);
     await waitForAsyncCallbacks();
@@ -751,8 +758,31 @@ test("audio compressor preserves its graph across SPA mini-player reparenting, r
     const passiveMessageCount = worker.messages.filter(({ message }) => message.kind === "set").length;
     const explicitPreference = structuredClone(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY]);
 
+    const ordinaryGain = sources.get(video).connections[0].connections[0];
+    let lost = 0;
+    const release = output.hold(video, () => lost++);
+    const gate = ordinaryGain.connections[0];
+    assert.equal(gate.gain.value, 0);
+    assert.deepEqual(gate.connections, [context.destination]);
+    assert.deepEqual(ordinaryGain.connections, [gate]);
+    assert.equal(
+        output.hold(video, () => {}),
+        null,
+        "a held output cannot be acquired twice"
+    );
+    release();
+    release();
+    assert.equal(lost, 0);
+    assert.deepEqual(ordinaryGain.connections, [context.destination]);
+    assert.deepEqual(gate.connections, []);
+    assert.equal(typeof output.hold(video, () => lost++), "function");
     disableOptions(chrome, { audioCompressorEnabled: { oldValue: true, newValue: false } });
     await waitForAsyncCallbacks();
+    assert.equal(lost, 1, "turning the feature off releases the caller exactly once");
+    assert.equal(output.available(video), true, "a previously attached running bypass is still usable");
+    const releaseBypass = output.hold(video, () => lost++);
+    releaseBypass();
+    assert.deepEqual(sources.get(video).connections[0].connections, [context.destination]);
     assert.equal(document.getElementById("cheese-spanner-audio-compressor"), null);
     assert.equal(
         chrome.storage.local.data[AUDIO_COMPRESSOR_TABS_STORAGE_KEY].find((state) => state.tabId === dom.testTabId)
@@ -1522,12 +1552,16 @@ test("audio compressor output survives tab reload, options and remounts without 
     assert.equal(b.button().getAttribute("aria-pressed"), "false");
 });
 
-test("a new auxiliary replay inherits the tab compressor choice and edits stay with that player", async (t) => {
-    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true, vodMultiviewEnabled: true } });
-    const page = await createCompressorPage(t, chrome, {
-        initialPath: "/video/1",
-        responseState: { active: true, volume: 0.63 },
+test("an already mounted auxiliary inherits a late tab compressor response and edits stay with that player", async (t) => {
+    const chrome = createFakeChrome({
+        sync: { audioCompressorEnabled: true, vodMultiviewEnabled: true },
+        local: { [AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY]: { active: true, volume: 0.63 } },
     });
+    const worker = createAudioCompressorWorker(chrome);
+    chrome.testState.compressorWorker = worker;
+    const gate = worker.pauseNextGet();
+    const page = await createCompressorPage(t, chrome, { initialPath: "/video/1", waitForControl: false });
+    await gate.started;
     const { dom, document, contexts } = page;
     const player = document.createElement("div");
     player.className = "pzp-pc";
@@ -1550,10 +1584,23 @@ test("a new auxiliary replay inherits the tab compressor choice and edits stay w
     const button = () => player.querySelector("#cheese-spanner-audio-compressor-aux-0");
     const slider = () => player.querySelector("#cheese-spanner-audio-compressor-aux-0-volume");
     notify();
+    await waitForAsyncCallbacks();
+    assert.equal(button(), null, "the auxiliary waits for the main tab's first stored choice");
+    assert.equal(contexts.length, 0);
+    gate.release();
     await waitForCondition(button);
+    assert.equal(page.button().getAttribute("aria-pressed"), "true");
     assert.equal(button().getAttribute("aria-pressed"), "true");
     assert.equal(slider().value, "63");
     assert.equal(contexts[1].gain.gain.value, 0.63);
+
+    const output = dom.window.CheeseSpanner.mainAudioOutput;
+    const source = contexts[1].source;
+    let lost = 0;
+    assert.equal(output.available(video), true, "the VOD auxiliary exposes its own attached output");
+    assert.equal(typeof output.hold(video, () => lost++), "function");
+    assert.equal(contexts[1].source, source);
+    assert.equal(contexts.length, 2);
 
     slider().value = "20";
     dispatchTrusted(slider(), new dom.window.Event("input", { bubbles: true }));
@@ -1561,10 +1608,12 @@ test("a new auxiliary replay inherits the tab compressor choice and edits stay w
     assert.equal(button().getAttribute("aria-pressed"), "false");
     assert.equal(page.button().getAttribute("aria-pressed"), "true");
     assert.equal(contexts[0].gain.gain.value, 0.63);
+    assert.equal(lost, 1, "changing this auxiliary's compressor releases the VOD hold");
 
     auxiliary = null;
     player.remove();
     notify();
+    assert.equal(output.available(video), false);
     assert.equal(button(), null);
     assert.equal(contexts[1].source.outputs.size, 0);
     player.dataset.bcvmVideoNo = "3";

@@ -38,6 +38,21 @@ async function start(page) {
 const CATEGORY_SECTION =
     '<nav aria-label="인기 카테고리"><header><strong>인기 카테고리</strong><button id="categoryRefresh" type="button" aria-label="새로고침"></button></header><ul><li><a href="/category/GAME/talk">토크</a></li></ul></nav>';
 
+test("following refresh rechecks ownership when a cached button is reused outside its section", async (t) => {
+    const page = createPage(
+        t,
+        `<aside id="sidebar">${CATEGORY_SECTION}<nav aria-label="팔로우"><button id="followingRefresh" aria-label="새로고침"></button></nav></aside>`
+    );
+    const tick = await start(page);
+    tick();
+    const doc = page.dom.window.document;
+    doc.querySelector('nav[aria-label="인기 카테고리"]').append(doc.getElementById("followingRefresh"));
+    tick();
+    doc.querySelector('nav[aria-label="팔로우"]').remove();
+    tick();
+    assert.deepEqual(page.clicks, ["followingRefresh"]);
+});
+
 test("following refresh never presses another section's refresh button while the following one is missing", async (t) => {
     // The measured section with its refresh button folded away.
     const measured = createPage(

@@ -28,6 +28,7 @@
     const MAX_COMPLETED_API_CLAIMS = 64;
     const CLICK_DELAY_MS = 800;
     const API_CLAIM_POLL_MS = 30000;
+    const API_LIST_TIMEOUT_MS = 12000;
     const WATCH_CLAIM_TYPE = "WATCH_1_HOUR";
     const LOG_POWER_API_ORIGIN = "https://api.chzzk.naver.com";
     const ANCESTOR_STATE_ATTRIBUTES = new Set([
@@ -202,18 +203,28 @@
         }
 
         const generation = apiRequestGeneration;
-        const controller = typeof AbortController === "function" ? new AbortController() : null;
+        const controller = new AbortController();
         apiAbortController = controller;
         apiCheckInFlight = true;
+        // Bound the read, including its JSON body. Once a claim PUT starts, its outcome remains authoritative.
+        const deadline = window.setTimeout(() => {
+            if (generation !== apiRequestGeneration) return;
+            apiRequestGeneration += 1;
+            apiCheckInFlight = false;
+            apiAbortController = null;
+            controller.abort();
+        }, API_LIST_TIMEOUT_MS);
+        controller.signal.addEventListener("abort", () => window.clearTimeout(deadline), { once: true });
 
         try {
             const response = await fetch(getLogPowerUrl(channelId), {
                 credentials: "include",
-                signal: controller?.signal,
+                signal: controller.signal,
             });
             if (!response?.ok) return;
 
             const data = await response.json();
+            window.clearTimeout(deadline);
             if (!isCurrentApiRequest(generation, channelId)) return;
             const claims = Array.isArray(data?.content?.claims) ? data.content.claims : [];
             if (claims.length > MAX_COMPLETED_API_CLAIMS) return;
@@ -235,7 +246,7 @@
                 const claimResponse = await fetch(getClaimUrl(channelId, claimId), {
                     method: "PUT",
                     credentials: "include",
-                    signal: controller?.signal,
+                    signal: controller.signal,
                 }).catch(() => null); // Leave a failed claim for the next poll and continue with the others.
                 if (!isCurrentApiRequest(generation, channelId)) return;
                 if (claimResponse?.ok) rememberCompletedApiClaim(claimKey);
@@ -243,6 +254,7 @@
         } catch (error) {
             if (error?.name !== "AbortError") return;
         } finally {
+            window.clearTimeout(deadline);
             if (generation === apiRequestGeneration) {
                 apiCheckInFlight = false;
                 apiAbortController = null;

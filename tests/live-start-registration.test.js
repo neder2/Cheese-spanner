@@ -195,6 +195,117 @@ test("one header button opens search on any page and never adds a channel-area b
     assert.equal(f.w.document.querySelectorAll("#" + ID).length, 1);
     assert.equal(f.action(SECOND).closest("li").querySelector("img")?.src, channel(SECOND).channelImageUrl);
 });
+test("the current channel uses verified route details and ignores clicks after navigation", async (t) => {
+    const f = fixture(t);
+    f.setFetch(async () => ({ code: 200, content: channel() }));
+    f.navigate("/live/" + CHANNEL);
+    await f.open();
+    const current = () => f.panel().querySelector('section[aria-label="현재 채널"]');
+    await waitForCondition(() => current().querySelector('[data-action="notify"]'));
+    assert.equal(new URL(f.requests[0].url).pathname, "/service/v1/channels/" + CHANNEL);
+    assert.match(current().textContent, /현재 채널/);
+    const toggle = current().querySelector('[data-action="notify"]');
+    toggle.click();
+    assert.equal(f.sent.length, 0);
+    f.trustedClick(toggle);
+    assert.equal(f.sent[0].channel.channelId, CHANNEL);
+    assert.equal(toggle.getAttribute("aria-pressed"), "true");
+    f.w.history.replaceState({}, "", "/" + SECOND + "/videos");
+    f.trustedClick(toggle);
+    assert.equal(f.sent.length, 1, "a changed location rejects the old row before the route listener runs");
+    f.w.dispatchEvent(new f.w.Event("cheese-spanner:routechange"));
+    await f.open();
+    await waitForCondition(() => current().textContent.includes("확인하지 못"));
+    assert.equal(current().querySelector("button"), null, "mismatched details cannot arm the current row");
+});
+
+test("a late channel detail response cannot populate a reopened panel on a different channel", async (t) => {
+    const f = fixture(t);
+    const replies = [];
+    f.setFetch(() => new Promise((resolve) => replies.push(resolve)));
+    f.navigate("/" + CHANNEL + "/about");
+    await f.open();
+    f.navigate("/" + SECOND + "/videos");
+    assert.equal(f.requests[0].signal.aborted, true);
+    await f.open();
+    replies[1]({ code: 200, content: channel(SECOND) });
+    await waitForCondition(() => f.action(SECOND));
+    replies[0]({ code: 200, content: channel() });
+    await new Promise(setImmediate);
+    assert.equal(f.action(), null);
+    assert.ok(f.action(SECOND));
+    f.navigate("/live/" + CHANNEL + "/chat");
+    await f.open();
+    assert.equal(f.requests.length, 2, "unrelated subroutes do not request a current channel");
+});
+
+test("following channels load only on explicit selection or refresh, filter locally and reuse the action writer", async (t) => {
+    const f = fixture(t);
+    const rows = Array.from({ length: 35 }, (_, i) => ({
+        channel: { ...channel((i + 1).toString(16).padStart(32, "0")), channelName: "팔로잉 " + i },
+    }));
+    const invalid = { channel: { ...channel(), channelId: [CHANNEL] } };
+    f.setFetch(async () => ({ code: 200, content: { followingList: [invalid, ...rows] } }));
+    await f.open();
+    const mode = () => f.panel().querySelector(".bcls-modes button:last-child");
+    mode().click();
+    assert.equal(f.requests.length, 0);
+    f.trustedClick(mode());
+    await waitForCondition(() => f.panel().querySelectorAll(".bcls-list:last-of-type li").length >= 32);
+    assert.equal(f.requests.length, 1);
+    assert.equal(new URL(f.requests[0].url).pathname, "/service/v1/channels/followings");
+    const more = [...f.panel().querySelectorAll("button")].find((el) => el.textContent === "더 보기");
+    assert.equal(more.hidden, false);
+    more.click();
+    const last = rows.at(-1).channel;
+    assert.ok(f.action(last.channelId));
+    f.type(last.channelName);
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.action(rows[0].channel.channelId), null);
+    f.action(last.channelId).click();
+    assert.equal(f.sent.length, 0);
+    f.trustedClick(f.action(last.channelId));
+    assert.equal(f.sent[0].kind, "set-notify");
+    const submit = f.panel().querySelector("form button");
+    f.setFetch(async () => ({ code: 401 }));
+    f.trustedClick(submit);
+    await waitForCondition(() => f.panel().textContent.includes("로그인한 뒤"));
+    assert.equal(f.sent.length, 1);
+    f.setFetch(async () => ({ code: 200, content: { followingList: [] } }));
+    f.trustedClick(submit);
+    await waitForCondition(() => f.panel().textContent.includes("팔로잉한 채널이 없어요"));
+});
+
+test("switching away cancels following requests and unregistered channels stay disabled at the limit", async (t) => {
+    const f = fixture(t, {
+        channels: Array.from({ length: 32 }, (_, i) => ({
+            ...channel((i + 1).toString(16).padStart(32, "0")),
+            notify: true,
+        })),
+    });
+    await f.open();
+    let finish;
+    f.setFetch(
+        () =>
+            new Promise((resolve) => {
+                finish = resolve;
+            })
+    );
+    const [search, following] = f.panel().querySelectorAll(".bcls-modes button");
+    f.trustedClick(following);
+    const request = f.requests.at(-1);
+    f.trustedClick(search);
+    assert.equal(request.signal.aborted, true);
+    finish({ code: 200, content: { followingList: [{ channel: channel() }] } });
+    await new Promise(setImmediate);
+    assert.equal(f.action(), null);
+    f.setFetch(async () => searchResponse(channel()));
+    await f.search();
+    assert.equal(f.action().disabled, true);
+    assert.match(f.panel().textContent, /등록 한도 32개/);
+    assert.equal(f.sent.length, 0);
+});
+
 test("registration removal deletes both channel actions and stays synchronized with search and settings", async (t) => {
     const saved = { ...channel(), notify: true, autoOpen: true };
     const other = { ...channel(SECOND), notify: true, autoOpen: false };

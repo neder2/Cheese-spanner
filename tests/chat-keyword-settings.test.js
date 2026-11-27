@@ -423,6 +423,13 @@ test("editor keyboard events stay out of player shortcuts, Escape restores focus
     words.focus();
     trusted(f.dom, words, "keydown", { key: "ArrowRight", code: "ArrowRight" });
     trusted(f.dom, words, "keyup", { key: "ArrowRight", code: "ArrowRight" });
+    words.value = "편집 중인 문구";
+    for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
+        const escape = trusted(f.dom, words, "keydown", { key: "Escape", code: "Escape", ...composition });
+        assert.equal(escape.defaultPrevented, false, "the IME can consume Escape");
+        assert.equal(f.document.querySelector(PANEL), panel);
+        assert.equal(words.value, "편집 중인 문구");
+    }
     assert.equal(playerKeys, 0);
     const button = panel.querySelector('[data-action="save"]');
     button.focus();

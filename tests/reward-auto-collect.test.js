@@ -371,6 +371,57 @@ test("reward auto collect discards an in-flight API result after the option is d
     );
 });
 
+test("reward auto collect retires a stalled list and ignores its body after polling resumes", async () => {
+    let listCount = 0;
+    const claims = [];
+    let releaseBody, signal, expire, poll;
+    const response = (id) => ({ content: { claims: [{ claimId: id, claimType: "FOLLOW" }] } });
+    const dom = createRewardDom(
+        {},
+        {
+            fetchImpl: async (url, init) => {
+                if (init.method === "PUT") {
+                    claims.push(String(url).split("/").at(-1));
+                    return createJsonResponse({});
+                }
+                listCount++;
+                if (listCount === 1) {
+                    signal = init.signal;
+                    return {
+                        ok: true,
+                        json: () =>
+                            new Promise((resolve) => {
+                                releaseBody = resolve;
+                            }),
+                    };
+                }
+                return createJsonResponse(response("available"));
+            },
+        }
+    );
+    const nativeTimeout = dom.window.setTimeout.bind(dom.window);
+    dom.window.setTimeout = (fn, ms, ...args) => {
+        if (ms === 12000) expire = fn;
+        return nativeTimeout(fn, ms, ...args);
+    };
+    const nativeInterval = dom.window.setInterval.bind(dom.window);
+    dom.window.setInterval = (fn, ms, ...args) => {
+        if (ms === 30000) poll = fn;
+        return nativeInterval(fn, ms, ...args);
+    };
+    await waitForCondition(() => releaseBody && expire && poll);
+    expire();
+    assert.equal(signal.aborted, true);
+    poll();
+    await waitForCondition(() => claims.includes("available"));
+    releaseBody(response("stale"));
+    await wait(20);
+    poll();
+    await waitForCondition(() => listCount === 3);
+    await wait(20);
+    assert.deepEqual(claims, ["available"]);
+});
+
 test("a repeatedly rejected claim does not block later rewards or retry a successful one", async () => {
     const attempts = [];
     const dom = createRewardDom(

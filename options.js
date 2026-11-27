@@ -30,6 +30,7 @@ const playbackSpeedShortcutKeys = playbackSpeedShortcutInputs.map((input) => inp
 const chatKeywordRuleKeys = ["chatKeywordFilterWords", "chatKeywordFilterExactWords"];
 const saveButton = document.getElementById("save");
 const discardButton = document.getElementById("discardChanges");
+const nonDefaultOnly = document.getElementById("nonDefaultOnly");
 const headerMenu = document.getElementById("headerMenu");
 const noticeEl = document.getElementById("notice");
 const messageEl = document.getElementById("message");
@@ -50,6 +51,15 @@ const OPTIONS_LOAD_ERROR_MESSAGE = "설정 불러오기 실패. 페이지를 새
 const OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE = "설정 불러오기 실패로 저장 중단. 페이지를 새로고침한 뒤 다시 시도.";
 const OPTIONS_SAVE_ERROR_MESSAGE = "설정 저장 실패. 잠시 후 다시 시도.";
 const optionsSaveConflictMessage = (count) => `다른 화면에서도 바뀐 항목 ${count}개는 이 화면의 값으로 저장.`;
+const OPTION_THEMES = {
+    system: { label: "시스템 설정", next: "화이트", icon: "M4 4h16v12H4z M8 20h8 M12 16v4" },
+    light: {
+        label: "화이트",
+        next: "다크",
+        icon: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5",
+    },
+    dark: { label: "다크", next: "시스템 설정", icon: "M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z" },
+};
 const NOTICE_STATE_LABELS = {
     loading: "불러오는 중",
     dirty: "변경됨",
@@ -93,6 +103,22 @@ function syncRangeLabel(input) {
     const output = input.id ? form.querySelector(`output[for="${input.id}"]`) : null;
     if (output) output.textContent = text;
 }
+
+const compressorPreset = document.getElementById("compressorPreset");
+const compressorKeys = ["Threshold", "Knee", "Ratio", "Attack", "Release", "MakeupGain"].map(
+    (name) => "audioCompressor" + name
+);
+const compressorDefaults = Object.fromEntries(compressorKeys.map((key) => [key, DEFAULT_OPTIONS[key]]));
+const compressorPresets = {
+    default: compressorDefaults,
+    light: { ...compressorDefaults, audioCompressorThreshold: -10, audioCompressorKnee: 4, audioCompressorRatio: 2 },
+    night: {
+        ...compressorDefaults,
+        audioCompressorThreshold: -30,
+        audioCompressorKnee: 18,
+        audioCompressorMakeupGain: 0.6,
+    },
+};
 
 function setInputValue(input, value) {
     if (input.type === "checkbox") {
@@ -254,7 +280,13 @@ function applyControlStates(options) {
     for (const control of optionInputs) {
         control.disabled = optionsUnavailable || isDisabledByDependency(control, options);
     }
+    compressorPreset.disabled = optionsUnavailable || saveInFlight || !options.audioCompressorEnabled;
+    compressorPreset.value =
+        Object.keys(compressorPresets).find((name) =>
+            compressorKeys.every((key) => options[key] === compressorPresets[name][key])
+        ) || "custom";
     renderChatKeywordRules(options, optionsUnavailable || !options.chatKeywordFilterEnabled);
+    nonDefaultOnly.disabled = optionsUnavailable;
     resetButton.disabled = optionsUnavailable || saveInFlight;
     shortcutResetButton.disabled =
         optionsUnavailable || saveInFlight || isDisabledByDependency(shortcutResetButton, options);
@@ -276,16 +308,7 @@ function renderNotice(state, changedCount = 0) {
 function renderPageState(options, state = "saved") {
     if (options.optionsTheme === "system") delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme = options.optionsTheme;
-    const themes = {
-        system: { label: "시스템 설정", next: "화이트", icon: "M4 4h16v12H4z M8 20h8 M12 16v4" },
-        light: {
-            label: "화이트",
-            next: "다크",
-            icon: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5",
-        },
-        dark: { label: "다크", next: "시스템 설정", icon: "M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z" },
-    };
-    const theme = themes[options.optionsTheme];
+    const theme = OPTION_THEMES[options.optionsTheme];
     const themeButton = document.getElementById("optionsTheme");
     const themeLabel = `화면 테마: ${theme.label}. 누르면 ${theme.next}`;
     themeButton.setAttribute("aria-label", themeLabel);
@@ -295,6 +318,8 @@ function renderPageState(options, state = "saved") {
     applyControlStates(options);
     renderNotice(state, Math.max(countChangedOptions(options), hasInvalidChatKeywords() ? 1 : 0));
     renderRecorderFolderStatus(options);
+    if (nonDefaultOnly.checked) applySearch(searchInput.value, options);
+    else if (form.classList.contains("is-searching")) refreshSearchJumps();
 }
 
 function renderOptions(options, { state = "saved" } = {}) {
@@ -798,6 +823,13 @@ document.getElementById("optionsTheme").addEventListener("click", (event) => {
     renderFormChanges();
 });
 
+compressorPreset.addEventListener("change", () => {
+    if (compressorPreset.disabled || !Object.hasOwn(compressorPresets, compressorPreset.value)) return;
+    for (const [key, value] of Object.entries(compressorPresets[compressorPreset.value])) setOptionValue(key, value);
+    markOptionsTouched(compressorKeys);
+    renderFormChanges();
+});
+
 shortcutResetButton.addEventListener("click", () => {
     if (optionsLoadState !== "ready" || saveInFlight || externalBusy || shortcutResetButton.disabled) return;
     for (const input of playbackSpeedShortcutInputs) {
@@ -1005,6 +1037,7 @@ globalThis.CheeseSpannerOptionsPage = Object.freeze({
         (!areOptionsEqual(readOptionsFromForm(), savedOptions) || hasInvalidChatKeywords()),
     setExternalBusy,
     reloadSavedOptions,
+    hideMessage,
     showMessage,
 });
 
@@ -1176,6 +1209,12 @@ tabBar?.addEventListener(
 if (tabButtons.length) activateTab(readStoredTabIndex());
 
 const searchInput = document.getElementById("settingsSearch");
+const searchJump = document.getElementById("settingsSearchJump");
+const nonDefaultList = document.getElementById("nonDefaultList");
+const jumpList = searchJump.querySelector(".search-jump-list");
+let searchCandidates = [];
+let highlightedRow = null;
+let highlightTimer = 0;
 const searchEmptyEl = document.getElementById("searchEmpty");
 const searchStatusEl = document.getElementById("searchStatus");
 const optionGroups = Array.from(form.querySelectorAll(".option-group"));
@@ -1292,7 +1331,8 @@ function normalizeSearchText(text) {
 // 접이식 그룹 안에서는 각 행·수치 묶음을 개별 검색 단위로 유지한다.
 const searchUnits = tabSections.flatMap((section) => {
     const heading = section.querySelector(".section-heading");
-    const headingText = normalizeSearchText(heading?.textContent || "");
+    const category = heading.querySelector("h2").textContent.trim();
+    const headingText = normalizeSearchText(category);
     return Array.from(section.children)
         .filter((child) => child !== heading)
         .flatMap((element) => {
@@ -1307,7 +1347,20 @@ const searchUnits = tabSections.flatMap((section) => {
                 : [];
         })
         .map(({ element, subheading }) => {
-            const optionKeys = Array.from(element.querySelectorAll("[data-option]"), (input) => input.dataset.option);
+            const controls = Array.from(element.querySelectorAll("[data-option]"));
+            const optionKeys = controls.map((control) => control.dataset.option);
+            const jumpTargets = controls.flatMap((control) => {
+                const label = control.labels?.[0];
+                if (control.type === "hidden" || !label) return [];
+                const caption = (
+                    label.querySelector("strong") ||
+                    label.querySelector("span") ||
+                    label
+                ).textContent.trim();
+                const aliases = (label.dataset.searchAliases || "").split(/\s+/).filter(Boolean);
+                const fields = [caption, control.dataset.option, ...aliases].map(normalizeSearchText);
+                return [{ control, label, caption, category, aliases, fields }];
+            });
             const dependencyNodes = element.matches("[data-depends-on]")
                 ? [element, ...element.querySelectorAll("[data-depends-on]")]
                 : Array.from(element.querySelectorAll("[data-depends-on]"));
@@ -1331,13 +1384,14 @@ const searchUnits = tabSections.flatMap((section) => {
                 groupText,
                 headingText,
                 optionKeys,
+                jumpTargets,
                 section,
                 subheading,
                 subheadingText: normalizeSearchText(
                     `${subheading?.textContent || ""} ${subheading?.dataset.searchTerms || ""}`
                 ),
                 text: normalizeSearchText(
-                    `${element.textContent} ${element.dataset.searchTerms || ""} ${optionKeys.join(" ")}`
+                    `${element.textContent} ${element.dataset.searchTerms || ""} ${optionKeys.join(" ")} ${jumpTargets.flatMap((target) => target.aliases).join(" ")}`
                 ),
             };
         });
@@ -1392,14 +1446,109 @@ function includeSearchContext(directMatches) {
     return visibleUnits;
 }
 
-function applySearch(query) {
+function jumpToSearchResult({ control, label }) {
+    if (control.closest("[hidden]")) return;
+    if (control.id === "optionsTheme") {
+        clearSearch();
+        control.focus();
+        return;
+    }
+    if (control.disabled) label.tabIndex = -1;
+    if (!revealOptionControl(control.disabled ? label : control)) return;
+    highlightedRow?.classList.remove("search-target-highlight");
+    clearTimeout(highlightTimer);
+    highlightedRow = label;
+    label.classList.add("search-target-highlight");
+    highlightTimer = window.setTimeout(() => {
+        label.classList.remove("search-target-highlight");
+        highlightedRow = null;
+    }, 1600);
+}
+
+function findSearchJumps(units, matches, normalized) {
+    const candidates = units.flatMap(({ jumpTargets, optionKeys }) => {
+        if (optionKeys.some((key) => normalizeSearchText(key) === normalized)) {
+            return jumpTargets.filter(({ control }) => normalizeSearchText(control.dataset.option) === normalized);
+        }
+        const named = jumpTargets.filter((target) => matches(target.fields));
+        return named.length ? named : jumpTargets;
+    });
+    // An exact alias takes precedence over incidental text such as “동시 시청자”.
+    const exactAliases = candidates.filter((target) => target.aliases.includes(normalized));
+    return exactAliases.length ? exactAliases : candidates;
+}
+
+function refreshSearchJumps() {
+    const visible = searchCandidates.filter(({ control }) => !control.closest("[hidden]"));
+    searchJump.hidden = !visible.length;
+    if (searchJump.hidden) searchJump.open = false;
+    renderResultButtons(jumpList, visible, (target) => `${target.category} · ${target.caption}`);
+}
+
+function renderResultButtons(list, targets, describe) {
+    const focusedKey = list.contains(document.activeElement) && document.activeElement.dataset.jumpOption;
+    if (
+        targets.length === list.childElementCount &&
+        targets.every(
+            (target, i) =>
+                list.children[i].dataset.jumpOption === target.control.dataset.option &&
+                list.children[i].textContent === describe(target)
+        )
+    )
+        return;
+
+    const fragment = document.createDocumentFragment();
+    for (const target of targets) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.jumpOption = target.control.dataset.option;
+        button.textContent = describe(target);
+        button.addEventListener("click", () => jumpToSearchResult(target));
+        fragment.append(button);
+    }
+    list.replaceChildren(fragment);
+    if (focusedKey) {
+        const next = Array.from(list.children).find((button) => button.dataset.jumpOption === focusedKey);
+        (next || searchInput).focus();
+    }
+}
+
+const themeSearchTarget = {
+    control: document.getElementById("optionsTheme"),
+    category: "화면",
+    caption: "화면 테마",
+    fields: ["화면", "테마", "화면테마", "optionstheme"],
+};
+
+function describeNonDefault(target, options) {
+    const control = target.control;
+    const value = options[control.dataset.option];
+    let display = String(value);
+    if (control === themeSearchTarget.control) display = OPTION_THEMES[value].label;
+    else if (control.type === "checkbox") display = value ? "켬" : "끔";
+    else if (control.tagName === "SELECT") display = control.selectedOptions[0]?.textContent || display;
+    else if (control.tagName === "TEXTAREA")
+        display = hasInvalidChatKeywords() ? "입력 확인 필요" : `문구 ${value.split("\n").filter(Boolean).length}개`;
+    else if (isShortcutCodeInput(control)) display = getPlaybackSpeedShortcutLabel(value);
+    else if (control.type === "range") display = control.getAttribute("aria-valuetext") || display;
+    else if (control.type === "number") display += target.label.querySelector("em")?.textContent || "";
+    return `${target.category} · ${target.caption} · ${display}`;
+}
+
+function applySearch(query, draft) {
     if (!searchInput) return;
     optionGroups.forEach(rememberGroupOpen);
     const normalized = normalizeSearchText(query);
-    const searching = normalized.length > 0;
+    const filtered = nonDefaultOnly.checked;
+    const searching = normalized.length > 0 || filtered;
     form.classList.toggle("is-searching", searching);
+    form.classList.toggle("shows-nondefaults", filtered);
+    nonDefaultList.hidden = !filtered;
+    if (!filtered && nonDefaultList.childElementCount) nonDefaultList.replaceChildren();
 
     if (!searching) {
+        searchCandidates = [];
+        refreshSearchJumps();
         for (const unit of searchUnits) unit.element.classList.remove("search-miss");
         for (const group of optionGroups) group.classList.remove("search-miss");
         for (const section of tabSections) section.classList.remove("search-miss");
@@ -1412,18 +1561,38 @@ function applySearch(query) {
         return;
     }
 
-    if (!searchOpenSnapshot) {
-        searchOpenSnapshot = new Set(optionGroups.filter((group) => group.open));
-    }
-
     const words = query.toLowerCase().trim().split(/\s+/);
-    const directMatches = searchUnits.filter((unit) => {
-        const fields = [unit.headingText, unit.groupText, unit.subheadingText, unit.text];
-        return (
-            fields.some((field) => field.includes(normalized)) ||
-            words.every((word) => fields.some((field) => field.includes(word)))
-        );
-    });
+    const matches = (fields) =>
+        fields.some((field) => field.includes(normalized)) ||
+        words.every((word) => fields.some((field) => field.includes(word)));
+    const directMatches = searchUnits.filter((unit) =>
+        matches([unit.headingText, unit.groupText, unit.subheadingText, unit.text])
+    );
+    const candidates = findSearchJumps(directMatches, matches, normalized);
+    searchCandidates = filtered ? [] : candidates;
+    refreshSearchJumps();
+
+    if (filtered) {
+        const options = draft || readOptionsFromForm();
+        if (!normalized || matches(themeSearchTarget.fields)) candidates.push(themeSearchTarget);
+        const targets = candidates.filter(({ control }) => {
+            const key = control.dataset.option;
+            return (
+                !control.closest("[hidden]") &&
+                (!Object.is(options[key], DEFAULT_OPTIONS[key]) ||
+                    (key === "chatKeywordFilterWords" && hasInvalidChatKeywords()))
+            );
+        });
+        renderResultButtons(nonDefaultList, targets, (target) => describeNonDefault(target, options));
+        searchStatusEl.hidden = false;
+        searchStatusEl.textContent = `${targets.length}개 항목`;
+        searchEmptyEl.textContent = normalized
+            ? `‘${query.trim()}’에 해당하는 기본값과 다른 설정 없음`
+            : "기본값과 다른 설정 없음";
+        searchEmptyEl.classList.toggle("hidden", targets.length > 0);
+        return;
+    }
+    if (!searchOpenSnapshot) searchOpenSnapshot = new Set(optionGroups.filter((group) => group.open));
     const visibleUnits = includeSearchContext(directMatches);
     const matchedGroups = new Set();
     const matchedSections = new Set();
@@ -1453,16 +1622,50 @@ function applySearch(query) {
 }
 
 function clearSearch() {
-    if (!searchInput || searchInput.value === "") return;
+    if (!searchInput || (searchInput.value === "" && !nonDefaultOnly.checked)) return;
+    nonDefaultOnly.checked = false;
     searchInput.value = "";
     applySearch("");
 }
 
+nonDefaultOnly.addEventListener("change", () => applySearch(searchInput.value));
+nonDefaultList.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    searchInput.focus();
+});
 searchInput?.addEventListener("input", () => applySearch(searchInput.value));
 searchInput?.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+    if (
+        event.key === "ArrowDown" &&
+        (!searchJump.hidden || (nonDefaultOnly.checked && nonDefaultList.childElementCount)) &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        !event.metaKey
+    ) {
+        event.preventDefault();
+        if (nonDefaultOnly.checked) nonDefaultList.firstElementChild.focus();
+        else {
+            searchJump.open = true;
+            jumpList.firstElementChild.focus();
+        }
+        return;
+    }
     if (event.key !== "Escape") return;
     event.preventDefault();
-    clearSearch();
+    if (nonDefaultOnly.checked && searchInput.value) {
+        searchInput.value = "";
+        applySearch("");
+    } else clearSearch();
+});
+
+searchJump.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    searchJump.open = false;
+    searchInput.focus();
 });
 
 // Only authored guide destinations may reveal a setting; this never edits or saves option values.
@@ -1475,7 +1678,10 @@ function showGuideTarget(target) {
         recording: "#videoRecorderChooseDirectory",
     };
     if (!Object.hasOwn(selectors, target)) return false;
-    const node = form.querySelector(selectors[target]);
+    return revealOptionControl(form.querySelector(selectors[target]));
+}
+
+function revealOptionControl(node) {
     if (!node) return false;
     const section = node.closest(".settings-card");
     const index = tabSections.indexOf(section);
@@ -1491,6 +1697,10 @@ function showGuideTarget(target) {
     node.focus({ preventScroll: true });
     return true;
 }
+for (const button of form.querySelectorAll("button[data-related-option]")) {
+    button.addEventListener("click", () => revealOptionControl(document.getElementById(button.dataset.relatedOption)));
+}
+
 globalThis.CheeseSpannerOptionsNavigation = Object.freeze({ showGuideTarget });
 function revealGuideHash() {
     const match = location.hash.match(/^#update-guide-(panels|history|stream|categories)$/);

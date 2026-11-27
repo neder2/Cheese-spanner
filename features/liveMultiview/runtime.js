@@ -184,6 +184,13 @@ ${root.multiviewView.bottomGripCss(`#${ID} .bcmv-separator[data-path="bottom"]`)
 .bcmv-panel[hidden],.bcmv-panel [hidden]{display:none!important}
 .bcmv-panel{--bcmv-accent:var(--bct-brand-text);--bcmv-danger:var(--bct-danger);--bcmv-tool-surface:var(--bct-surface-weak);--bcmv-brand-fill:var(--bct-brand);--bcmv-line:var(--bct-border)}
 #${PANEL_ID} button{margin:0}
+.bcmv-preset-actions{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px}
+.bcmv-preset-list{list-style:none;padding:0;display:grid;gap:4px}
+.bcmv-preset-list li{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.bcmv-preset-list span{overflow-wrap:anywhere;min-width:0}
+.bcmv-preset-list button{flex:none}
+.bcmv-preset button{background:var(--bcmv-tool-surface);color:inherit;border:1px solid var(--bcmv-line);border-radius:var(--bct-radius-sm);padding:4px 8px;font:inherit}
+.bcmv-preset button:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:2px}
 .bcmv-panel-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
 .bcmv-panel-tools{display:flex;gap:2px}
 .bcmv-panel h3{margin:0;font-size:13px;font-weight:600}
@@ -241,6 +248,13 @@ ${root.multiviewView.bottomGripCss(`#${ID} .bcmv-separator[data-path="bottom"]`)
 .bcmv-move-status{position:absolute;inset:0;width:1px;height:1px;margin:0;padding:0;border:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .bcmv-stream:last-child{border-bottom:0;padding-bottom:0}
 .bcmv-stream-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.bcmv-stream-audio{grid-column:1/-1;display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0}
+#${PANEL_ID} .bcmv-stream-audio button{box-sizing:border-box;min-height:28px;max-width:100%;padding:3px 8px;border:1px solid var(--bcmv-border);border-radius:var(--bct-radius-sm);background:var(--bcmv-tool-surface);color:inherit;font:inherit;font-size:12px;white-space:normal;overflow-wrap:anywhere;cursor:pointer}
+#${PANEL_ID} .bcmv-stream-audio button[aria-pressed="true"]{border-color:var(--bcmv-accent);background:var(--bct-brand-weak);color:var(--bcmv-accent);font-weight:700}
+#${PANEL_ID} .bcmv-stream-audio button:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:1px}
+#${PANEL_ID} .bcmv-stream-audio button:disabled{opacity:.55;cursor:default}
+.bcmv-solo-hint{min-width:0;font-size:12px;color:var(--bct-text-muted);overflow-wrap:anywhere}
+.bcmv-solo-hint:empty{display:none}
 .bcmv-stream-timing{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:2px 6px;min-width:0;font-size:12px;font-variant-numeric:tabular-nums}
 .bcmv-stream [data-bcmv-delay]{color:var(--bct-text-muted)}
 .bcmv-quality,.bcmv-quality-main{grid-column:1/-1;min-width:0}
@@ -482,12 +496,22 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         const { action, channel, delta } = binding;
         if (["delay", "reset-delay", "apply-delay"].includes(action) && !event.isTrusted) return;
         const player = players.get(channel);
+        if (action === "solo-audio") {
+            if (event.isTrusted && settingsPanel.contains(control)) players.toggleSolo(player);
+            return;
+        }
+        if (action.startsWith("preset-")) {
+            if (event.isTrusted && settingsPanel.contains(control)) settingsPanel.presetAction(control);
+            return;
+        }
         if (action === "main") {
             event.preventDefault();
             navigate(control);
             return;
         }
-        if (action === "add-search-result") {
+        if (action === "restore-audio") {
+            if (event.isTrusted) settingsPanel.restoreAudio(control);
+        } else if (action === "add-search-result") {
             settingsPanel.addSearchResult(channel);
         } else if (action === "add") {
             notice("");
@@ -543,17 +567,26 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             const fromPanel = settingsPanel.contains(control);
             layout.cancelResize();
             layout.cancelDrag();
+            if (event.isTrusted) {
+                players.captureAudio(player);
+                settingsPanel.rememberRemovedAudio(
+                    player,
+                    state.channels.find((entry) => entry.id === player.id)
+                );
+            }
+            if (state.channels.length === 2) players.clearSolo();
+            players.dispose(player);
             state.channels = state.channels.filter((entry) => entry.id !== player.id);
             state.dockTree = state.customLayout
                 ? model.removeTree(state.dockTree, player.id)
                 : model.defaultTree(state.channels);
             if (state.channels.length === 1) state.dockTree = state.channels[0].id;
-            players.dispose(player);
             settingsPanel.afterRemove(player.id);
             persistSession();
             render();
             if (fromPanel) settingsPanel.focusAfterRemove();
         } else if (action === "mute" && player?.video) {
+            if (players.soloId && !event.isTrusted) return;
             toggleMute(player);
         } else if (action === "toggle-play" && player?.video) {
             players.togglePlay(player);
@@ -579,7 +612,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         if (state.channels.length >= model.MAX_VIEWS) return `최대 ${model.MAX_VIEWS}개 방송까지 추가 가능.`;
         return "";
     }
-    function addStreamFromUrl(value, freeRect = null) {
+    function addStreamFromUrl(value, freeRect = null, audio = null) {
         if (!enabled || !state.active || !routeId || !host) return false;
         notice("");
         const id = model.channelFromUrl(value),
@@ -591,7 +624,8 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         // A topology change must start from the committed layout, before a remount cancels its preview.
         layout.cancelResize();
         layout.cancelDrag();
-        state.channels.push({ id, volume: 0.3, muted: true });
+        state.channels.push({ id, volume: audio?.volume ?? 0.3, muted: audio?.muted ?? true });
+        settingsPanel.addedChannel(id);
         state.dockTree = state.customLayout
             ? model.addTree(state.dockTree, id, routeId)
             : model.defaultTree(state.channels);
@@ -722,6 +756,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
     }
     function onVolumeWheel(event) {
         if (!enabled || !state.active || !featureOptions?.volumeWheelEnabled) return;
+        if (players.soloId && !event.isTrusted) return;
         if (!Number.isFinite(event.deltaY) || !event.deltaY || !(event.target instanceof Element)) return;
         const control = event.target.closest('.bcmv-controls [data-action="mute"], .bcmv-controls input[type="range"]');
         if (!control || !overlay?.contains(control)) return;
@@ -740,6 +775,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         const step = featureOptions.volumeWheelStep / 100;
         const before = player.video.muted ? 0 : player.video.volume;
         const volume = Math.round(Math.max(0, Math.min(1, before + (event.deltaY < 0 ? step : -step))) * 10000) / 10000;
+        players.clearSolo();
         player.video.volume = volume;
         player.video.muted = volume === 0;
         // A focused slider skips passive UI updates, so update it for this explicit gesture too.
@@ -748,15 +784,20 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
     }
     function onInput(event) {
         if (!event.target.matches('input[type="range"]')) return;
+        if (players.soloId && !event.isTrusted) return;
         const player = players.get(event.target.dataset.channel);
         if (player?.video) {
-            player.video.volume = Number(event.target.value) / 100;
+            const volume = Number(event.target.value) / 100;
+            players.clearSolo();
+            player.video.volume = volume;
             if (player.video.volume > 0) player.video.muted = false;
             players.captureAudio(player);
         }
     }
     function toggleMute(player) {
-        player.video.muted = !(player.video.muted || player.video.volume === 0);
+        const muted = !(player.video.muted || player.video.volume === 0);
+        players.clearSolo();
+        player.video.muted = muted;
         if (!player.video.muted && player.video.volume === 0) player.video.volume = 0.3;
         players.captureAudio(player);
     }
@@ -771,6 +812,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         const player = cell && players.get(cell.dataset.bcmvChannel);
         if (!player || player.main || !players.current(player) || !overlay?.contains(cell)) return;
         if (!player.video || !cell.contains(player.video)) return;
+        if (players.soloId && !event.isTrusted) return;
         event.preventDefault();
         event.stopPropagation();
         toggleMute(player);
@@ -937,6 +979,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             return;
         }
         if (host !== nextHost || native !== nextNative || (state.active && !overlay?.isConnected)) {
+            if (native !== nextNative || host !== nextHost) players.clearSolo();
             releaseHost();
             host = nextHost;
             native = nextNative;
@@ -995,6 +1038,8 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             window.removeEventListener("dragleave", onAddDragLeave, true);
             window.removeEventListener("drop", onAddDrop, true);
             window.removeEventListener("pagehide", clearIncomingDrag);
+            window.removeEventListener("pagehide", players.clearSolo);
+            window.removeEventListener("pagehide", settingsPanel.forgetRemovedAudio);
             if (frame) cancelAnimationFrame(frame);
             frame = 0;
             teardown(true);
@@ -1037,6 +1082,8 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         window.addEventListener("dragleave", onAddDragLeave, true);
         window.addEventListener("drop", onAddDrop, true);
         window.addEventListener("pagehide", clearIncomingDrag);
+        window.addEventListener("pagehide", players.clearSolo);
+        window.addEventListener("pagehide", settingsPanel.forgetRemovedAudio);
         stopRoute = startPageChangeDetection(onRoute);
         mount();
     }

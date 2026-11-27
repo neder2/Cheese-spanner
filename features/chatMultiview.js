@@ -171,6 +171,7 @@
         unsaved = false;
     let donationMessagesHidden = false;
     let nicknameHidden = false;
+    let welcomeMessagesHidden = false;
     let lifecycle = 0,
         loadVersion = 0,
         storageRevision = 0,
@@ -266,7 +267,7 @@
     }
     // 같은 문서의 변경은 순서대로 처리해요. 각 변경은 실행 시점의 문서 구성에서 계산하고
     // 마지막으로 확인한 저장 원본을 expected로 보내요.
-    function commit(mutate, { success = "", after } = {}) {
+    function commit(mutate, { success = "", after, keepOnFailure = true } = {}) {
         if (!active || !ready) return;
         const cycle = lifecycle;
         const task = async () => {
@@ -314,6 +315,8 @@
                     unsaved = false;
                 } else if (revision === storageRevision) void loadConfig();
                 notify(TEXT.conflict);
+            } else if (revision === storageRevision && !keepOnFailure) {
+                notify("채팅 구성 저장 실패. 현재 목록 유지.");
             } else if (revision === storageRevision) {
                 // 저장하지 못한 선택도 현재 문서에서는 유지하고, 다음 변경이 같은 expected로 다시 저장해요.
                 config = result.config;
@@ -327,6 +330,43 @@
         });
         return queue;
     }
+    // Same isolated world as the video panel. Preview reads this document's existing configuration only.
+    root.previewLiveChatAddition = () => {
+        if (!active || !ready || unsaved) return null;
+        const before = config;
+        const cycle = lifecycle;
+        const revision = storageRevision;
+        return {
+            existing: before.channels.map(({ channelId }) => channelId),
+            async apply(channels, stillSelected) {
+                let outcome = "conflict";
+                if (!channels.length || channels.length > model.MAX_CHANNELS || !stillSelected()) return outcome;
+                await commit(
+                    (base) => {
+                        if (cycle !== lifecycle || revision !== storageRevision || base !== before || !stillSelected())
+                            return { ok: false, error: "changed" };
+                        let next = base;
+                        for (const channel of channels) {
+                            const appended = model.addChannel(next, channel);
+                            if (!appended.ok) return appended;
+                            next = appended.config;
+                        }
+                        return { ok: true, config: next };
+                    },
+                    {
+                        success: "선택한 채팅 추가 완료",
+                        keepOnFailure: false,
+                        after(value) {
+                            outcome = value;
+                        },
+                    }
+                );
+                if (outcome === "saved" && cycle === lifecycle && stillSelected()) openPanel();
+                return outcome;
+            },
+        };
+    };
+
     function onStorageChange(changes, area) {
         if (area !== "local" || !Object.hasOwn(changes, KEY)) return;
         storageRevision++;
@@ -754,8 +794,9 @@
         if (!config.input) rules.push(FRAME_INPUT_AREA);
         const donations = donationMessagesHidden ? root.chatDonationMessages?.STYLE_TEXT || "" : "";
         const nicknames = nicknameHidden ? root.chatNicknameDisplay?.STYLE_TEXT || "" : "";
+        const welcome = welcomeMessagesHidden ? root.chatTools?.WELCOME_MESSAGE_STYLE_TEXT || "" : "";
         const base = FRAME_FIT + "\n" + rules.join(",\n") + "{display:none!important}";
-        return [base, donations, nicknames].filter(Boolean).join("\n");
+        return [base, donations, nicknames, welcome].filter(Boolean).join("\n");
     }
     function syncFrameStyle(cell) {
         if (!cell.verified || !isChatLocation(frameLocation(cell.frame), cell)) return;
@@ -1823,6 +1864,7 @@
             if (!running) return;
             donationMessagesHidden = next?.chatDonationMessagesHidden === true;
             nicknameHidden = next?.chatNicknameHidden === true;
+            welcomeMessagesHidden = next?.chatWelcomeMessageRemovalEnabled === true;
             if (next?.chatMultiviewEnabled === true) activate();
             else deactivate();
             for (const cell of panel?.cells.values() || []) syncFrameStyle(cell);

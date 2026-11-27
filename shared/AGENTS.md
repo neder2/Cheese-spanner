@@ -47,7 +47,7 @@
 
 ## 설정 저장 경계
 
-백업 대상 키의 writer는 모두 확장 출처 Web Lock `cheese-spanner:options-storage` 안에서 최신 값을 읽고 써요. 옵션 페이지·워커는 `withOptionsStorageLock`을 직접 쓰고, 콘텐츠는 `settingsStoreSet`으로 워커 큐에 요청해요. 잠금을 잡은 채 네트워크 요청을 기다리지 않아요(방송 대상 채널 조회는 잠금 밖). 설정 파일 적용은 잠금을 한 번 잡은 상태에서 최신 값·미리보기 지문 비교·단계별 쓰기·되돌리기까지 끝내고, 효과 옵션은 끄는 쪽 먼저·켜는 쪽 마지막이에요. 잠금 밖 변경(다른 기기 Chrome sync)이 관측된 키는 이후 단계에서 쓰지 않고 되돌리지도 않으며 결과에 따로 알려요. 시청 기록·카테고리 제외·안내 큐와 합치지 않아요.
+일반 설정 백업 대상 키의 writer는 확장 출처 Web Lock `cheese-spanner:options-storage` 안에서 최신 값을 읽고 써요. 옵션 페이지·워커는 `withOptionsStorageLock`을 직접 쓰고, 콘텐츠는 `settingsStoreSet`으로 워커 큐에 요청해요. 잠금을 잡은 채 네트워크 요청을 기다리지 않아요(방송 대상 채널 조회는 잠금 밖). 설정 파일 적용은 잠금을 한 번 잡은 상태에서 최신 값·미리보기 지문 비교·단계별 쓰기·되돌리기까지 끝내고, 효과 옵션은 끄는 쪽 먼저·켜는 쪽 마지막이에요. 잠금 밖 변경(다른 기기 Chrome sync)이 관측된 키는 이후 단계에서 쓰지 않고 되돌리지도 않으며 결과에 따로 알려요. 시청 기록·안내 큐는 독립적이에요. 선택한 카테고리·태그 제외 목록을 가져올 때만 설정 잠금 안에서 제외 목록 큐를 함께 사용해요. 방송 목록의 개별 추가·해제는 그 큐에서만 실행돼요.
 
 회귀는 `tests/settings-store.test.js`(발신자·허용 목록·기대값 충돌·도착 순서·읽기와 쓰기 사이 끼어든 writer·잠금 없는 대조군·되돌리기 실패/충돌 구분), `tests/live-start.test.js`(복원 직후 진행 중 방송 기준화), `tests/options-settings-backup.test.js`(옵션 UI)와 기존 writer 테스트의 저장 흉내(`tests/helpers/settings-store-emulation.js`)가 보호해요.
 

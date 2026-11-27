@@ -3474,6 +3474,17 @@ h1 {
     overflow-wrap: anywhere;
 }
 
+.backup-choice {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.backup-choice input {
+    flex: none;
+    accent-color: var(--accent);
+}
 .settings-backup-summary {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);

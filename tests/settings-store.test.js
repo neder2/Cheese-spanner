@@ -4,6 +4,7 @@ const test = require("node:test");
 require("../shared/settings.js");
 require("../shared/data.js");
 require("../shared/liveStart.js");
+require("../shared/categoryExclusions.js");
 require("../shared/settingsBackup.js");
 require("../shared/settingsStore.js");
 
@@ -1076,4 +1077,153 @@ test("channel settings keep existing values editable at the backup limit and rej
     });
     assert.equal(h.local[keys[0]], 720);
     assert.equal(Object.hasOwn(h.local, another), false);
+});
+
+test("settings files export exclusions only by choice and merge against the confirmed latest local revision", async () => {
+    const model = globalThis.CheeseSpanner.categoryExclusions;
+    const key = model.STORAGE_KEY;
+    const tag = model.createTagExclusion(" #Music ");
+    const category = { categoryType: "GAME", categoryId: "fixture", categoryValue: "원래 이름" };
+    const initial = { version: 1, revision: 7, categories: [tag, category] };
+    const h = harness({ local: { [key]: initial } });
+    const send = (action, extra = {}) => h.send({ type: BACKUP, version: 1, action, ...extra }, optionsSender);
+    const plainFile = (await send("export")).backup;
+    assert.equal(plainFile.formatVersion, 1);
+    assert.equal(Object.hasOwn(plainFile.local, "categoryExclusions"), false);
+    const selected = (await send("export", { includeExclusions: true })).backup;
+    assert.equal(selected.formatVersion, 2);
+    assert.deepEqual(selected.local.categoryExclusions, initial.categories);
+    const backup = {
+        ...selected,
+        sync: {},
+        local: {
+            categoryExclusions: [
+                model.createTagExclusion("music"),
+                { ...category, categoryValue: "파일 이름" },
+                model.createTagExclusion("other"),
+            ],
+        },
+    };
+    const off = await send("preview", { backup });
+    assert.equal(off.changes, 0);
+    assert.equal((await send("apply", { backup, fingerprint: off.fingerprint })).result.status, "unchanged");
+    assert.deepEqual(h.local[key], initial);
+    const opted = { backup, includeExclusions: true };
+    const preview = await send("preview", opted);
+    assert.deepEqual(preview.summary.categoryExclusions, { current: 2, added: 1, duplicates: 2 });
+    const concurrent = model.createTagExclusion("concurrent");
+    h.emitRemote("local", key, { ...initial, revision: 8, categories: [...initial.categories, concurrent] });
+    const reconfirm = (await send("apply", { ...opted, fingerprint: preview.fingerprint })).result;
+    assert.equal(reconfirm.status, "reconfirm");
+    assert.equal(reconfirm.summary.categoryExclusions.current, 3);
+    assert.equal((await send("apply", { ...opted, fingerprint: reconfirm.fingerprint })).result.status, "applied");
+    assert.deepEqual(h.local[key], {
+        version: 1,
+        revision: 9,
+        categories: [tag, category, concurrent, model.createTagExclusion("other")],
+    });
+    assert.equal((await send("preview", opted)).changes, 0);
+    assert.equal(
+        (await send("preview", { backup: plainFile, includeExclusions: true })).summary.categoryExclusions,
+        undefined
+    );
+});
+
+test("settings exclusion import rejects malformed entries, overflow and corrupt storage, and rolls back a failed merge", async () => {
+    const model = globalThis.CheeseSpanner.categoryExclusions;
+    const key = model.STORAGE_KEY;
+    const tags = Array.from({ length: 100 }, (_, i) => model.createTagExclusion("tag" + i));
+    const state = { version: 1, revision: 4, categories: tags };
+    const h = harness({ sync: { skipSeconds: 5 }, local: { [key]: state } });
+    const incoming = model.createTagExclusion("extra");
+    const backup = { ...file({ options: { skipSeconds: 10 } }, { categoryExclusions: [incoming] }), formatVersion: 2 };
+    const send = (action, extra = {}, sender = optionsSender) =>
+        h.send({ type: BACKUP, version: 1, action, backup, includeExclusions: true, ...extra }, sender);
+    assert.equal((await send("preview", {}, contentSender)).error, "untrusted-sender");
+    assert.equal((await send("preview", { includeExclusions: 1 })).error, "invalid-request");
+    assert.equal((await send("preview")).error, "exclusions-limit");
+    assert((await send("preview", { includeExclusions: false })).ok);
+    assert.deepEqual(h.local[key], state);
+    for (const bad of [
+        [incoming, incoming],
+        [{ ...incoming, categoryId: "different" }],
+        [{ ...incoming, categoryValue: "##extra" }],
+        [...tags, incoming],
+    ]) {
+        assert.equal(
+            (await send("preview", { backup: { ...backup, local: { categoryExclusions: bad } } })).error,
+            "invalid-file"
+        );
+    }
+    h.local[key] = { unexpected: true };
+    const exported = await send("export");
+    assert(exported.omitted.includes("categoryExclusions"));
+    assert.equal(exported.backup.formatVersion, 1);
+    assert.equal((await send("preview")).error, "invalid-stored-exclusions");
+    delete h.local[key];
+    const preview = await send("preview");
+    h.failures.set = (area, values) => area === "local" && Object.hasOwn(values, key);
+    const failed = await send("apply", { fingerprint: preview.fingerprint });
+    assert.equal(failed.result.status, "failed");
+    assert.equal(failed.result.rolledBack, true);
+    assert.equal(h.sync.skipSeconds, 5);
+    assert.equal(h.local[key], undefined);
+});
+
+test("a list addition received during confirmed import runs after the merge and preserves both choices", async () => {
+    const model = globalThis.CheeseSpanner.categoryExclusions;
+    const h = harness();
+    const listController = model.createController({ chrome: h.chrome });
+    const first = model.createTagExclusion("file");
+    const second = model.createTagExclusion("other-tab");
+    const backup = { ...file({}, { categoryExclusions: [first] }), formatVersion: 2 };
+    const send = (action, extra = {}) =>
+        h.send({ type: BACKUP, version: 1, action, backup, includeExclusions: true, ...extra }, optionsSender);
+    const preview = await send("preview");
+    let addition;
+    h.hooks.beforeGet = (area, keys) => {
+        if (area !== "local" || !Array.isArray(keys) || !keys.includes(model.STORAGE_KEY)) return;
+        h.hooks.beforeGet = null;
+        const url = "https://chzzk.naver.com/lives";
+        addition = listController.handleMessage(
+            { type: model.MESSAGE_TYPE, version: 1, operation: { kind: "add", category: second } },
+            { id: "ext", frameId: 0, url, tab: { id: 3, url } }
+        );
+    };
+    assert.equal((await send("apply", { fingerprint: preview.fingerprint })).result.status, "applied");
+    assert.equal((await addition).ok, true);
+    assert.deepEqual(h.local[model.STORAGE_KEY], { version: 1, revision: 2, categories: [first, second] });
+});
+
+test("rolling back an imported exclusion list restores the open list with a newer revision", async () => {
+    const model = globalThis.CheeseSpanner.categoryExclusions;
+    const key = model.STORAGE_KEY;
+    const initial = { version: 1, revision: 4, categories: [model.createTagExclusion("kept")] };
+    const h = harness({ local: { [key]: initial }, sync: { liveWatchHistoryEnabled: false } });
+    const backup = {
+        ...file(
+            { options: { liveWatchHistoryEnabled: true } },
+            { categoryExclusions: [model.createTagExclusion("temporary")] }
+        ),
+        formatVersion: 2,
+    };
+    const send = (action, extra = {}) =>
+        h.send({ type: BACKUP, version: 1, action, backup, includeExclusions: true, ...extra }, optionsSender);
+    const preview = await send("preview");
+    const observed = [];
+    h.hooks.afterSet = (area, values) => {
+        if (area === "local" && values[key]) observed.push(values[key]);
+    };
+    h.failures.set = (area, values) => area === "sync" && values.liveWatchHistoryEnabled === true;
+    const applied = await send("apply", { fingerprint: preview.fingerprint });
+    assert.equal(applied.result.stage, "effects-on");
+    assert.equal(applied.result.rolledBack, true);
+    assert.equal(observed.length, 2);
+    assert.deepEqual(observed[0].categories, [...initial.categories, model.createTagExclusion("temporary")]);
+    assert.deepEqual(observed[1].categories, initial.categories);
+    assert(observed[1].revision > observed[0].revision, "an already-open broadcast list ignores a lower revision");
+    assert.deepEqual(h.local[key], observed[1]);
+    h.local[key] = { ...initial, revision: Number.MAX_SAFE_INTEGER - 1 };
+    assert.equal((await send("preview")).error, "invalid-stored-exclusions");
+    assert.equal(h.local[key].revision, Number.MAX_SAFE_INTEGER - 1);
 });

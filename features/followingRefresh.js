@@ -64,39 +64,36 @@
         });
     }
 
+    function belongsToFollowingSection(button) {
+        let node = button.parentElement;
+        for (let depth = 0; node && node !== document.body && depth < 7; depth += 1, node = node.parentElement) {
+            // 여러 구역을 함께 담은 조상의 팔로잉 글자는 이 버튼의 구역을 알려 주지 않아요.
+            const refreshButtons = Array.from(node.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(isRefreshButton);
+            if (refreshButtons.length > 1) return false;
+            if (hasFollowingSignal(node)) return true;
+            if (node.matches(SECTION_BOUNDARY_SELECTOR)) return false;
+        }
+        return false;
+    }
+
     function findFollowingRefreshButton() {
-        if (isUsableRefreshButton(cachedRefreshButton)) return cachedRefreshButton;
-        cachedRefreshButton = null;
-
-        const buttons = Array.from(document.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(isRefreshButton);
-
         // 팔로잉 구역을 접어 그 버튼이 없을 때 다른 구역 버튼으로 대신하지 않아요.
         const section = document.querySelector(FOLLOWING_SECTION_SELECTOR);
         if (section) {
-            cachedRefreshButton = buttons.find((button) => section.contains(button)) || null;
+            if (section.contains(cachedRefreshButton) && isUsableRefreshButton(cachedRefreshButton))
+                return cachedRefreshButton;
+            cachedRefreshButton =
+                Array.from(section.querySelectorAll(REFRESH_BUTTON_SELECTOR)).find(isUsableRefreshButton) || null;
             return cachedRefreshButton;
         }
 
-        for (const button of buttons) {
-            let node = button.parentElement;
-
-            for (let depth = 0; node && node !== document.body && depth < 7; depth += 1, node = node.parentElement) {
-                // 여러 구역을 함께 담은 조상의 팔로잉 글자는 이 버튼의 구역을 알려 주지 않으므로 먼저 멈춰요.
-                const refreshButtons = Array.from(node.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(
-                    isRefreshButton
-                );
-                if (refreshButtons.length > 1) break;
-
-                if (hasFollowingSignal(node)) {
-                    cachedRefreshButton = button;
-                    return button;
-                }
-
-                if (node.matches(SECTION_BOUNDARY_SELECTOR)) break;
-            }
-        }
-
-        return null;
+        if (isUsableRefreshButton(cachedRefreshButton) && belongsToFollowingSection(cachedRefreshButton))
+            return cachedRefreshButton;
+        cachedRefreshButton =
+            Array.from(document.querySelectorAll(REFRESH_BUTTON_SELECTOR)).find(
+                (button) => isUsableRefreshButton(button) && belongsToFollowingSection(button)
+            ) || null;
+        return cachedRefreshButton;
     }
 
     function clickFollowingRefreshButton() {

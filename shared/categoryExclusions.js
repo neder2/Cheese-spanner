@@ -171,9 +171,31 @@
         return failed("invalid-request");
     }
 
-    function createController({ chrome } = {}) {
-        let queue = Promise.resolve();
+    // Both the list controls and an explicitly selected settings-file merge run in the same worker.
+    let queue = Promise.resolve();
+    function withWriteQueue(task) {
+        const result = queue.then(task);
+        queue = result.catch(() => {});
+        return result;
+    }
 
+    function normalizeFileEntries(entries) {
+        const state = normalizeState({ version: VERSION, revision: 0, categories: entries });
+        if (!state) return null;
+        for (const entry of state.categories) {
+            if (!isTagExclusion(entry)) continue;
+            const normalized = createTagExclusion(entry.categoryValue);
+            if (
+                !normalized ||
+                normalized.categoryId !== entry.categoryId ||
+                normalized.categoryValue !== entry.categoryValue
+            )
+                return null;
+        }
+        return state.categories;
+    }
+
+    function createController({ chrome } = {}) {
         function storageCall(kind, value) {
             const errorCode = kind === "get" ? "storage-read-failed" : "storage-write-failed";
             return new Promise((resolve) => {
@@ -226,11 +248,9 @@
             const normalized = normalizeRequest(message);
             if (!normalized.operation) return Promise.resolve(normalized);
             // This durable key has its own queue and reads the latest local value for every received operation.
-            const result = queue
-                .then(() => applyOperation(normalized.operation))
-                .catch(() => failed("storage-read-failed"));
-            queue = result.then(() => undefined);
-            return result;
+            return withWriteQueue(() => applyOperation(normalized.operation)).catch(() =>
+                failed("storage-read-failed")
+            );
         }
 
         return Object.freeze({ handleMessage });
@@ -238,6 +258,9 @@
 
     root.categoryExclusions = Object.freeze({
         MESSAGE_TYPE,
+        MAX_CATEGORIES,
+        normalizeFileEntries,
+        withWriteQueue,
         STORAGE_KEY,
         TAG_TYPE,
         normalizeCategory,

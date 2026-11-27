@@ -135,26 +135,30 @@
     // playing on the same video. Every pause takes a sample, so a seek made while paused is never counted.
     // Likewise the play event that starts playback ends an interval that began stopped on the same video (a pause, or
     // a paused tick, also one after a source reload), so that interval counts nothing even though the media time
-    // moved (a seek or a new source while stopped). A tick that finds the video playing keeps counting as before.
+    // moved (a seek or a new source while stopped).
     function getCountableWatchSeconds(video, current, deltaSeconds, { finalTick = false, playbackStart = false } = {}) {
         const mediaTime = getVideoMediaTime(video);
         const previousMediaTime = current.lastMediaTime;
-        const playedSinceSample = current.lastSampleActive === true && current.lastSampleVideo === video;
-        const stoppedSinceSample = current.lastSampleActive === false && current.lastSampleVideo === video;
+        const sameVideo = current.lastSampleVideo === video;
+        const sampleRate = current.lastSampleRate;
+        const playedSinceSample = current.lastSampleActive === true && sameVideo;
+        const stoppedSinceSample = current.lastSampleActive === false && sameVideo;
         if (mediaTime !== null) current.lastMediaTime = mediaTime;
         markMediaSample(current, video);
 
-        if (deltaSeconds <= 0 || mediaTime === null || previousMediaTime === null) return 0;
+        if (!sameVideo || deltaSeconds <= 0 || mediaTime === null || previousMediaTime === null) return 0;
         if (!(mediaTime > previousMediaTime + 0.05)) return 0;
-        if (isVideoActive(video)) return playbackStart && stoppedSinceSample ? 0 : deltaSeconds;
-        const rate = Number(video?.playbackRate);
-        if (!finalTick || !playedSinceSample || !(video instanceof HTMLVideoElement) || !(rate > 0)) return 0;
-        return Math.min(deltaSeconds, (mediaTime - previousMediaTime) / rate);
+        if (video?.seeking || (playbackStart && stoppedSinceSample)) return 0;
+        if (!isVideoActive(video) && (!finalTick || !playedSinceSample)) return 0;
+        // A waiting event can arrive late. Only the part traversed at the sampled rate was spent watching.
+        if (!(sampleRate > 0) || !Number.isFinite(sampleRate)) return 0;
+        return Math.min(deltaSeconds, (mediaTime - previousMediaTime) / sampleRate);
     }
 
     function markMediaSample(current, video) {
         current.lastSampleActive = isVideoActive(video);
         current.lastSampleVideo = video || null;
+        current.lastSampleRate = Number(video?.playbackRate);
     }
 
     function addPendingRange(current, startAt, endAt) {
@@ -810,6 +814,18 @@
         current.lastSampleVideo = attachedVideo;
     }
 
+    // currentTime can already be at the destination on seeking. Start a new sample on both boundaries.
+    function resetSeekSample() {
+        if (!session) return;
+        session.lastTickAt = performance.now();
+        session.lastMediaTime = getVideoMediaTime(attachedVideo);
+        markMediaSample(session, attachedVideo);
+    }
+
+    function onRateChange() {
+        accrueWatchTime({ finalTick: true });
+    }
+
     function detachVideo() {
         if (!attachedVideo) return;
         attachedVideo.removeEventListener("play", onVideoPlay, true);
@@ -818,6 +834,9 @@
         attachedVideo.removeEventListener("ended", onVideoEnded, true);
         attachedVideo.removeEventListener("waiting", onVideoPause, true);
         attachedVideo.removeEventListener("emptied", onVideoEmptied, true);
+        attachedVideo.removeEventListener("seeking", resetSeekSample, true);
+        attachedVideo.removeEventListener("seeked", resetSeekSample, true);
+        attachedVideo.removeEventListener("ratechange", onRateChange, true);
         attachedVideo = null;
     }
 
@@ -833,6 +852,9 @@
         attachedVideo.addEventListener("ended", onVideoEnded, true);
         attachedVideo.addEventListener("waiting", onVideoPause, true);
         attachedVideo.addEventListener("emptied", onVideoEmptied, true);
+        attachedVideo.addEventListener("seeking", resetSeekSample, true);
+        attachedVideo.addEventListener("seeked", resetSeekSample, true);
+        attachedVideo.addEventListener("ratechange", onRateChange, true);
 
         if (session) scheduleMetadataRefresh(0);
         if (isVideoActive(video)) startSession();

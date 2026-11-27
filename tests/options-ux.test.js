@@ -9,8 +9,8 @@ const {
     waitForAsyncCallbacks,
 } = require("./helpers/extension-page-fixture.js");
 
-async function openOptions(t) {
-    const chrome = createFakeChrome({ sync: { autoQualityEnabled: true, skipSeconds: 15 } });
+async function openOptions(t, sync = { autoQualityEnabled: true, skipSeconds: 15 }) {
+    const chrome = createFakeChrome({ sync });
     const dom = createDom("options.html", "options.html", chrome);
     t.after(() => dom.window.close());
     evalRepoScript(dom, "shared", "settings.js");
@@ -256,4 +256,284 @@ test("compact header retains release notes and reset with Escape and outside dis
     trigger.focus();
     document.getElementById("settingsSearch").focus();
     assert.equal(menu.open, false, "tabbing away must not leave the header menu covering the form");
+});
+
+test("related VOD settings reveal and focus controls across tabs while preserving the unsaved draft", async (t) => {
+    const { dom, chrome, document } = await openOptions(t);
+    const clock = queryOption(document, "vodBroadcastClockEnabled");
+    const multiview = queryOption(document, "vodMultiviewEnabled");
+    const previous = clock.checked;
+    let writes = 0;
+    chrome.storage.sync.set = () => writes++;
+    document.querySelector('[data-tab="vod"]').click();
+    clock.checked = !previous;
+    dispatch(dom, clock, "change");
+    const search = document.getElementById("settingsSearch");
+    search.value = "다시보기";
+    dispatch(dom, search, "input");
+    for (const target of [multiview, clock]) {
+        const button = document.querySelector(`[data-related-option="${target.id}"]`);
+        button.click();
+        assert.equal(search.value, "");
+        assert.equal(target.closest(".option-group").open, true);
+        assert.equal(target.closest(".settings-card").classList.contains("is-active"), true);
+        assert.equal(document.activeElement, target);
+    }
+    assert.equal(clock.checked, !previous);
+    assert.equal(document.getElementById("notice").textContent, "변경 1개");
+    assert.equal(writes, 0);
+});
+
+test("search aliases offer the matching controls and jumping preserves the unsaved draft and permissions", async (t) => {
+    const { dom, chrome, document } = await openOptions(t);
+    document.querySelector('[data-tab="sound"]').click();
+    const sound = queryOption(document, "volumeWheelStep");
+    sound.value = "7";
+    dispatch(dom, sound, "input");
+    const search = document.getElementById("settingsSearch");
+    const jump = document.getElementById("settingsSearchJump");
+    const trigger = jump.querySelector("summary");
+    assert.equal(jump.hidden, true);
+    assert.equal(trigger.textContent.trim(), "설정으로 이동");
+    const multiview = ["liveMultiviewEnabled", "vodMultiviewEnabled", "chatMultiviewEnabled"];
+    for (const [query, keys] of [
+        ["도네", ["liveWatchHistoryDonationEnabled", "chatWeeklyRankingHidden", "chatDonationMessagesHidden"]],
+        ["동시시청", multiview],
+        ["합방", multiview],
+    ]) {
+        search.focus();
+        search.value = query;
+        dispatch(dom, search, "input");
+        assert.equal(jump.hidden, false);
+        assert.equal(document.activeElement, search);
+        assert.equal(document.querySelector('.tab[aria-selected="true"]').dataset.tab, "sound");
+        if (!jump.open) trigger.click();
+        for (const key of keys) {
+            assert.equal(queryOption(document, key).closest(".search-miss"), null, key);
+            assert.equal(jump.querySelectorAll(`button[type="button"][data-jump-option="${key}"]`).length, 1, key);
+        }
+        assert.equal(jump.querySelector('[data-jump-option="autoQualityEnabled"]'), null);
+        assert.equal(document.getElementById("searchEmpty").classList.contains("hidden"), true, query);
+    }
+    const live = queryOption(document, "liveMultiviewEnabled");
+    const original = live.checked;
+    jump.querySelector('[data-jump-option="liveMultiviewEnabled"]').click();
+    assert.equal(document.activeElement, live);
+    assert.equal(live.closest(".settings-card").classList.contains("is-active"), true);
+    assert.equal(live.closest(".option-group").open, true);
+    assert.equal(live.closest("label").classList.contains("search-target-highlight"), true);
+    assert.equal(live.checked, original);
+    assert.equal(search.value, "");
+    assert.equal(jump.hidden, true);
+    assert.equal(sound.value, "7");
+    assert.equal(document.getElementById("notice").textContent, "변경 1개");
+    assert.deepEqual(chrome.testState.sync, { autoQualityEnabled: true, skipSeconds: 15 });
+    assert.equal(chrome.testState.permissionRequests.length, 0);
+});
+
+test("search jump keyboard navigation leaves IME keys alone and returns focus on Escape", async (t) => {
+    const { dom, document } = await openOptions(t);
+    const search = document.getElementById("settingsSearch");
+    const jump = document.getElementById("settingsSearchJump");
+    function keydown(key, options = {}) {
+        const event = new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options });
+        document.activeElement.dispatchEvent(event);
+        return event.defaultPrevented;
+    }
+    search.focus();
+    search.value = "합방";
+    dispatch(dom, search, "input");
+    for (const marker of [{ isComposing: true }, { keyCode: 229 }]) {
+        for (const key of ["Escape", "ArrowDown"]) {
+            assert.equal(keydown(key, marker), false);
+            assert.equal(search.value, "합방");
+            assert.equal(document.activeElement, search);
+            assert.equal(jump.open, false);
+        }
+    }
+    assert.equal(keydown("ArrowDown"), true);
+    assert.equal(jump.open, true);
+    assert.equal(document.activeElement, jump.querySelector("button[data-jump-option]"));
+    assert.equal(keydown("Escape"), true);
+    assert.equal(jump.open, false);
+    assert.equal(document.activeElement, search);
+    assert.equal(search.value, "합방");
+    assert.equal(keydown("Escape"), true);
+    assert.equal(search.value, "");
+    assert.equal(jump.hidden, true);
+    search.value = "없는설정xyz";
+    dispatch(dom, search, "input");
+    assert.equal(jump.hidden, true);
+    assert.equal(document.getElementById("searchEmpty").classList.contains("hidden"), false);
+    assert.equal(keydown("ArrowDown"), false);
+});
+
+test("a disabled search target reveals and focuses its label without enabling its dependency", async (t) => {
+    const { dom, chrome, document } = await openOptions(t);
+    const search = document.getElementById("settingsSearch");
+    const jump = document.getElementById("settingsSearchJump");
+    const gain = queryOption(document, "audioCompressorMakeupGain");
+    const enable = queryOption(document, "audioCompressorEnabled");
+    const row = gain.closest("label");
+    search.value = "audioCompressorMakeupGain";
+    dispatch(dom, search, "input");
+    jump.querySelector("summary").click();
+    jump.querySelector('[data-jump-option="audioCompressorMakeupGain"]').click();
+    assert.equal(gain.closest(".option-group").open, true);
+    assert.equal(document.activeElement, row);
+    assert.equal(row.classList.contains("search-target-highlight"), true);
+    assert.equal(gain.disabled, true);
+    assert.equal(enable.checked, false);
+    assert.equal(document.getElementById("save").disabled, true);
+    assert.equal(chrome.testState.permissionRequests.length, 0);
+});
+
+test("search jumps track visible match conditions without substituting a sibling for a hidden option key", async (t) => {
+    const { dom, document } = await openOptions(t);
+    const search = document.getElementById("settingsSearch");
+    const jump = document.getElementById("settingsSearchJump");
+    const applyMode = queryOption(document, "chatKeywordFilterApplyMode");
+    const matchMode = queryOption(document, "chatKeywordFilterMatchMode");
+    const matchJump = '[data-jump-option="chatKeywordFilterMatchMode"]';
+    search.value = "문구";
+    dispatch(dom, search, "input");
+    jump.querySelector("summary").click();
+    assert.ok(jump.querySelector(matchJump));
+    for (const mode of ["individual", "all", "individual"]) {
+        applyMode.value = mode;
+        dispatch(dom, applyMode, "change");
+        await waitForAsyncCallbacks();
+        assert.equal(search.value, "문구");
+        assert.equal(matchMode.closest("label").hidden, mode === "individual");
+        assert.equal(Boolean(jump.querySelector(matchJump)), mode === "all", mode);
+    }
+    search.value = matchMode.dataset.option;
+    dispatch(dom, search, "input");
+    assert.equal(jump.hidden, true);
+    assert.equal(jump.querySelector('[data-jump-option="chatKeywordFilterApplyMode"]'), null);
+});
+
+test("the nondefault filter uses the current draft and restores the selected category and group without writing", async (t) => {
+    const { dom, chrome, document } = await openOptions(t);
+    const filter = document.getElementById("nonDefaultOnly");
+    const list = document.getElementById("nonDefaultList");
+    const keys = () => [...list.querySelectorAll("button")].map((button) => button.dataset.jumpOption);
+    const sound = queryOption(document, "volumeWheelStep");
+    const skip = queryOption(document, "skipSeconds");
+    const group = sound.closest(".option-group");
+    document.getElementById("tab-sound").click();
+    if (group.open) group.querySelector("summary").click();
+    await waitForAsyncCallbacks();
+    const localBefore = { ...chrome.testState.local };
+    filter.click();
+    assert.deepEqual(keys(), ["skipSeconds"]);
+    assert.match(list.textContent, /15/);
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
+    assert.equal(document.getElementById("save").disabled, true);
+    filter.click();
+    assert.ok(list.hidden);
+    assert.equal(group.open, false);
+    assert.equal(document.getElementById("tab-sound").getAttribute("aria-selected"), "true");
+    assert.deepEqual(chrome.testState.local, localBefore);
+
+    sound.value = "7";
+    dispatch(dom, sound, "input");
+    skip.value = String(dom.window.CheeseSpannerSettings.DEFAULT_OPTIONS.skipSeconds);
+    dispatch(dom, skip, "input");
+    filter.click();
+    assert.deepEqual(keys(), ["volumeWheelStep"]);
+    assert.match(list.textContent, /7/);
+    assert.equal(document.getElementById("notice").textContent, "변경 2개");
+    document.getElementById("discardChanges").click();
+    assert.deepEqual(keys(), ["skipSeconds"]);
+    assert.equal(filter.checked, true);
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
+
+    list.querySelector("button").click();
+    assert.equal(document.activeElement, skip);
+    assert.equal(filter.checked, false);
+    skip.value = String(dom.window.CheeseSpannerSettings.DEFAULT_OPTIONS.skipSeconds);
+    dispatch(dom, skip, "change");
+    filter.click();
+    assert.deepEqual(keys(), []);
+    assert.match(document.getElementById("searchEmpty").textContent, /기본값과 다른 설정 없음/);
+    assert.deepEqual(chrome.testState.sync, { autoQualityEnabled: true, skipSeconds: 15 });
+    assert.equal(chrome.testState.permissionRequests.length, 0);
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    assert.equal(chrome.testState.sync.skipSeconds, dom.window.CheeseSpannerSettings.DEFAULT_OPTIONS.skipSeconds);
+    assert.equal(Object.hasOwn(chrome.testState.sync, "nonDefaultOnly"), false);
+    assert.equal(filter.checked, true);
+    assert.deepEqual(keys(), []);
+});
+
+test("changed results intersect search aliases, preserve IME navigation and focus the exact setting", async (t) => {
+    const { dom, chrome, document } = await openOptions(t, { liveMultiviewEnabled: true, optionsTheme: "dark" });
+    const search = document.getElementById("settingsSearch");
+    const filter = document.getElementById("nonDefaultOnly");
+    const list = document.getElementById("nonDefaultList");
+    const result = (key) => list.querySelector(`[data-jump-option="${key}"]`);
+    const hit = (key, flags) => {
+        const e = new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...flags });
+        document.activeElement.dispatchEvent(e);
+        return e.defaultPrevented;
+    };
+    filter.click();
+    assert.match(result("optionsTheme").textContent, /다크/);
+    assert.ok(result("liveMultiviewEnabled"));
+    search.value = "합방";
+    dispatch(dom, search, "input");
+    assert.equal(result("optionsTheme"), null);
+    assert.equal(list.childElementCount, 1);
+    assert.match(list.textContent, /켬/);
+    search.focus();
+    assert.equal(hit("ArrowDown", { isComposing: true }), false);
+    assert.equal(hit("Escape", { keyCode: 229 }), false);
+    assert.equal(search.value, "합방");
+    assert.equal(hit("ArrowDown"), true);
+    assert.equal(document.activeElement, result("liveMultiviewEnabled"));
+    assert.equal(hit("Escape"), true);
+    assert.equal(document.activeElement, search);
+    assert.equal(hit("Escape"), true);
+    assert.equal(search.value, "");
+    assert.equal(filter.checked, true);
+    result("liveMultiviewEnabled").click();
+    assert.equal(document.activeElement, queryOption(document, "liveMultiviewEnabled"));
+    assert.equal(filter.checked, false);
+    assert.equal(document.getElementById("save").disabled, true);
+    assert.equal(chrome.testState.permissionRequests.length, 0);
+    filter.click();
+    result("optionsTheme").click();
+    assert.equal(document.activeElement.id, "optionsTheme");
+    assert.equal(document.activeElement.value, "dark");
+    assert.equal(filter.checked, false);
+});
+
+test("the nondefault list respects conditional rows and updates after an external setting change", async (t) => {
+    const { chrome, document } = await openOptions(t, {
+        audioCompressorMakeupGain: 2,
+        chatKeywordFilterApplyMode: "individual",
+        chatKeywordFilterMatchMode: "exact",
+    });
+    const filter = document.getElementById("nonDefaultOnly");
+    const list = document.getElementById("nonDefaultList");
+    const result = (key) => list.querySelector(`[data-jump-option="${key}"]`);
+    filter.click();
+    assert.equal(result("chatKeywordFilterMatchMode"), null);
+    assert.ok(result("chatKeywordFilterApplyMode"));
+    assert.ok(result("audioCompressorMakeupGain"));
+    result("audioCompressorMakeupGain").click();
+    assert.equal(document.activeElement, queryOption(document, "audioCompressorMakeupGain").labels[0]);
+    assert.equal(queryOption(document, "audioCompressorEnabled").checked, false);
+    filter.click();
+    chrome.testState.sync.chatKeywordFilterApplyMode = "all";
+    for (const fn of chrome.testState.storageChangeListeners)
+        fn({ chatKeywordFilterApplyMode: { oldValue: "individual", newValue: "all" } }, "sync");
+    assert.ok(result("chatKeywordFilterMatchMode"));
+    assert.equal(result("chatKeywordFilterApplyMode"), null);
+    assert.equal(document.getElementById("save").disabled, true);
+    assert.equal(chrome.testState.permissionRequests.length, 0);
+    document.getElementById("tab-history").click();
+    assert.equal(filter.checked, false);
+    assert.equal(document.getElementById("tab-history").getAttribute("aria-selected"), "true");
 });

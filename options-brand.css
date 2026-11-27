@@ -357,3 +357,93 @@
 .live-start-channels [data-error="true"] {
     color: var(--danger);
 }
+
+.options-body .related-option {
+    display: block;
+    width: fit-content;
+    margin: 4px 0 12px;
+    padding: 4px 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.filter-tools {
+    display: grid;
+    gap: 2px;
+}
+
+.nondefault-filter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    min-height: 26px;
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.nondefault-filter input {
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+.nondefault-filter small {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.settings-form.shows-nondefaults > .settings-card,
+#nonDefaultList[hidden] {
+    display: none;
+}
+
+#nonDefaultList {
+    max-height: none;
+    overflow: visible;
+    overflow-wrap: anywhere;
+}
+
+.settings-search-jump summary {
+    width: fit-content;
+    padding: 4px 8px;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.search-jump-list {
+    display: grid;
+    gap: 2px;
+    max-height: min(26vh, 12rem);
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.search-jump-list button {
+    border: 0;
+    border-radius: 6px;
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 7px 10px;
+    font: inherit;
+    font-size: 13px;
+    text-align: start;
+    cursor: pointer;
+}
+
+.search-jump-list button:hover {
+    background: var(--surface-3);
+}
+
+.options-body .search-target-highlight {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+}

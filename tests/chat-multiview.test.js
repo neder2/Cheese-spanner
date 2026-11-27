@@ -681,6 +681,30 @@ test("donation hiding follows the global option in verified chat frames without 
     assert.equal(f.storeMessages.length, 0, "display changes never write chat layout or messages");
 });
 
+test("verified chat frames follow the same welcome and filter notice option as the top document", async (t) => {
+    const f = fixture(t, { stored: layout([A]) });
+    for (const file of ["chatTools/parser", "chatTools/messageStore", "chatTools/panel", "chatTools"]) {
+        f.w.eval(read("features/" + file + ".js"));
+    }
+    await f.open();
+    const native = f.attachFrame(A);
+    native.load();
+    await waitForCondition(() => f.cell(A).dataset.state === "ready");
+    const frame = f.frame(A);
+    const style = native.doc.getElementById("cheese-spanner-chat-multiview-frame-style");
+    assert.ok(!style.textContent.includes("_welcome_"));
+    for (const enabled of [true, false, true]) {
+        f.changeSync({ chatWelcomeMessageRemovalEnabled: enabled });
+        const topStyle = f.w.document.getElementById("cheese-spanner-chat-welcome-message-style");
+        assert.equal(Boolean(topStyle), enabled);
+        if (enabled) assert.ok(style.textContent.includes(topStyle.textContent));
+        else assert.ok(!style.textContent.includes("_welcome_"));
+        assert.equal(f.frame(A), frame);
+        assert.equal(native.doc.querySelectorAll("style").length, 1);
+    }
+    assert.equal(f.storeMessages.length, 0);
+});
+
 test("a frame load alone is not success: the verified chat path and the native chat log are both required", async (t) => {
     const f = fixture(t, { stored: layout([A, B, C]) });
     await f.open();
@@ -2316,4 +2340,27 @@ test("a pending channel addition preserves the new search input and its results"
     assert.equal(f.input().value, "새 검색");
     assert.equal(f.result(C).closest(".bccmv-results").hidden, false);
     assert.equal(f.sheetShown("add"), true);
+});
+
+test("confirmed additions from video multiview leave every chat cell intact after cancellation, stale preview or save failure", async (t) => {
+    const f = fixture(t, { stored: layout([A]) });
+    await waitForCondition(() => f.w.CheeseSpanner.previewLiveChatAddition?.());
+    const preview = () => f.w.CheeseSpanner.previewLiveChatAddition();
+    const selected = [{ channelId: B, channelName: "보조" }];
+    assert.equal(await preview().apply(selected, () => false), "conflict");
+    assert.equal(f.storeMessages.length, 0);
+    assert.equal(f.panel(), null);
+    f.setStoreMode("fail");
+    assert.equal(await preview().apply(selected, () => true), "failed");
+    assert.equal(f.panel(), null);
+    assert.deepEqual([...preview().existing], [A], "failed save did not keep an unsaved addition");
+    await f.open();
+    const stale = preview();
+    f.setStoreMode("emulate");
+    f.trusted(f.action(A, "remove"));
+    await waitForCondition(() => !f.cell(A));
+    const writes = f.storeMessages.length;
+    assert.equal(await stale.apply(selected, () => true), "rejected");
+    assert.equal(f.storeMessages.length, writes);
+    assert.equal(f.frame(B), null);
 });

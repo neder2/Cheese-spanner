@@ -82,6 +82,8 @@
         hideLiveBadgeEnabled: { kind: "bool", default: false, feature: true },
         playerClipHidden: { kind: "bool", default: false, feature: true },
         playerPipHidden: { kind: "bool", default: false, feature: true },
+        videoScreenshotEnabled: { kind: "bool", default: false, feature: true },
+        videoScreenshotAction: { kind: "choice", default: "file", values: ["file", "clipboard", "both"] },
         // 플레이어 오른쪽 아래 녹화 버튼(features/videoRecorder.js). 녹화는 버튼을 누를 때만 시작해요.
         videoRecorderEnabled: { kind: "bool", default: false, feature: true },
         // Chrome 다운로드 폴더 아래 하위 폴더. 빈 값은 다운로드 폴더 자체예요. 하위 폴더 저장에는 선택 권한 downloads가 필요해요.
@@ -133,6 +135,7 @@
         // 일반 라이브·다시보기의 채팅 열 위치. 기본은 치지직 원래 배치(오른쪽)예요.
         chatPosition: { kind: "choice", values: ["right", "left"], default: "right" },
         chatTimestampEnabled: { kind: "bool", default: false, feature: true },
+        timeMachineChatEnabled: { kind: "bool", default: false, feature: true },
         vodChatTimestampEnabled: { kind: "bool", default: false, feature: true },
         // 로그인 계정의 작성자 해시로만 비교해요. 계정 해시는 저장하지 않아요(features/vodOwnChat.js).
         vodOwnChatHighlightEnabled: { kind: "bool", default: true, feature: true },

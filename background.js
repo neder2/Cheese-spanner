@@ -34,6 +34,7 @@ importScripts(
 importScripts("shared/liveStart.js", "shared/liveStartMonitor.js");
 importScripts("shared/followingTitleHistory.js", "shared/followingTitleCollector.js");
 importScripts("shared/followingFolders.js", "shared/chatMultiview.js");
+importScripts("shared/liveMultiviewPreset.js");
 importScripts("shared/followingFoldersRecovery.js");
 importScripts("shared/settingsBackup.js", "shared/settingsStore.js");
 importScripts("shared/donationHistoryImport.js");
@@ -66,6 +67,7 @@ const updateGuide = globalThis.CheeseSpannerUpdateGuideController.createControll
 });
 const categoryExclusions = globalThis.CheeseSpanner.categoryExclusions.createController({ chrome });
 const settingsStore = globalThis.CheeseSpannerSettingsStore.createController({ chrome });
+const liveMultiviewPreset = globalThis.CheeseSpannerLiveMultiviewPreset.createController(chrome);
 globalThis.CheeseSpannerFollowingFoldersRecovery.install(chrome);
 const recordingDownloads = globalThis.CheeseSpannerRecordingDownloads.createController({ chrome });
 // onDeterminingFilename must be registered in the first turn so the event can wake this worker.
@@ -378,6 +380,10 @@ globalThis.CheeseSpannerDonationHistoryImport.install({
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === globalThis.CheeseSpannerLiveMultiviewPreset.TYPE) {
+        liveMultiviewPreset.handle(message, sender).then(sendResponse);
+        return true;
+    }
     if (message?.type === "cheese-spanner:load-hls") {
         if (
             Object.keys(message).length !== 1 ||

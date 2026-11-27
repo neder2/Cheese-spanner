@@ -813,6 +813,91 @@
         }
     }
 
+    function readChzzkChannelList(items) {
+        const results = new Map();
+        for (const item of items) {
+            const channel = item?.channel;
+            const id = channel?.channelId;
+            if (typeof id !== "string" || !/^[a-f0-9]{32}$/i.test(id) || typeof channel.channelName !== "string")
+                continue;
+            const name = channel.channelName.trim().slice(0, 100);
+            const key = id.toLowerCase();
+            if (name && !results.has(key))
+                results.set(key, {
+                    id: channel.channelId,
+                    name,
+                    image: normalizeChzzkImageUrl(channel.channelImageUrl),
+                });
+        }
+        return [...results.values()];
+    }
+
+    async function fetchChzzkFollowingChannels({ signal }) {
+        const maxFollowingChannels = 505;
+        const params = new URLSearchParams({ page: "0", size: maxFollowingChannels, sortType: "FOLLOW" });
+        try {
+            const response = await fetchJson(`https://api.chzzk.naver.com/service/v1/channels/followings?${params}`, {
+                signal,
+            });
+            if (response?.code === 401) return { status: "login-required" };
+            if (response?.code !== 200 || !Array.isArray(response.content?.followingList))
+                return { status: "lookup-error" };
+            return {
+                status: "ok",
+                channels: readChzzkChannelList(response.content.followingList.slice(0, maxFollowingChannels)),
+            };
+        } catch (error) {
+            if (signal?.aborted) throw error;
+            return { status: error?.message === "HTTP 401" ? "login-required" : "lookup-error" };
+        }
+    }
+
+    function mediaFileNamePart(value, maxLength, maxBytes, fallback) {
+        const clean = String(value || "")
+            // eslint-disable-next-line no-control-regex -- strip characters disallowed in local file names.
+            .replace(/[\\/:*?"<>|\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "_")
+            .replace(/\s+/g, " ")
+            .trim();
+        let result = "";
+        let bytes = 0;
+        for (const char of clean) {
+            const code = char.codePointAt(0);
+            const size = code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+            if (result.length + char.length > maxLength || bytes + size > maxBytes) break;
+            result += char;
+            bytes += size;
+        }
+        return result.replace(/[. ]+$/, "") || fallback;
+    }
+
+    async function getMediaFileNameLabel({ live, id, signal, credentials = "include" }) {
+        let title = mediaFileNamePart(`${live ? "라이브" : "다시보기"} ${id}`, 90, 150, "영상");
+        let channelName = "스트리머 정보 없음";
+        try {
+            const endpoint = live
+                ? `service/v3/channels/${encodeURIComponent(id)}/live-detail`
+                : `service/v2/videos/${encodeURIComponent(id)}`;
+            const json = await fetchJson(`https://api.chzzk.naver.com/${endpoint}`, {
+                signal,
+                timeoutMs: 3500,
+                credentials,
+            });
+            const detail = json?.content;
+            const verified =
+                json?.code === 200 &&
+                (live
+                    ? detail?.channel?.channelId === id && detail.status === "OPEN"
+                    : String(detail?.videoNo) === String(id));
+            if (verified) {
+                title = mediaFileNamePart(live ? detail.liveTitle : detail.videoTitle, 90, 150, title);
+                channelName = mediaFileNamePart(detail.channel?.channelName, 40, 60, channelName);
+            }
+        } catch (_) {
+            // The current route ID is safer than a DOM title retained across SPA navigation.
+        }
+        return `${title} - ${channelName}`;
+    }
+
     function createCommentDeviceId() {
         return globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
     }
@@ -1087,6 +1172,8 @@
         collectWatchSessionRanges,
         compactSpaces,
         fetchChzzkCommentPage,
+        fetchChzzkFollowingChannels,
+        readChzzkChannelList,
         parseChzzkCommentPage,
         parseTimecodeSeconds,
         commentTimecodes,
@@ -1097,6 +1184,8 @@
         formatKstMonthKey,
         formatKstTime,
         getKstDateKey,
+        getMediaFileNameLabel,
+        mediaFileNamePart,
         getKstDateScopeBounds,
         getKstDayStartMs,
         getKstMonthStartMs,

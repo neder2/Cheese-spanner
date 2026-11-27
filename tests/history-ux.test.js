@@ -45,6 +45,7 @@ async function openHistory(t, amendHistory = () => {}, expectedVisibleCount = 2)
     });
     dom.window.Date.now = () => NOW;
     evalRepoScript(dom, "shared", "data.js");
+    evalRepoScript(dom, "shared", "vodTimeline.js");
     evalRepoScript(dom, "history.js");
     await waitForCondition(() => dom.window.document.querySelectorAll(".history-item").length === expectedVisibleCount);
     const document = dom.window.document;
@@ -682,6 +683,113 @@ test("replay lookup keeps paging when the first video page holds only uploads", 
     await waitForCondition(() => f.requests.some((url) => url.includes("page=1")));
 });
 
+test("activity playback uses the verified broadcast segment in either direction and keeps the end exclusive", async (t) => {
+    const { dom } = await openHistory(t);
+    const split = 17 * 3600;
+    const start = "2026-09-10 10:00:00";
+    const at = Date.parse("2026-09-10T10:00:00+09:00");
+    const record = { channelId: REPLAY_CHANNEL, liveId: "10", liveOpenDate: start };
+    const detail = (no, duration, links = {}) => ({
+        videoNo: no,
+        videoType: "REPLAY",
+        channel: { channelId: REPLAY_CHANNEL },
+        liveOpenDate: start,
+        duration,
+        ...links,
+    });
+    const rows = {
+        100: detail(100, split, { prevVideo: { videoNo: 200 } }),
+        200: detail(200, 120, { nextVideo: { videoNo: 100, duration: split } }),
+    };
+    dom.window.fetch = async (url) => ({
+        ok: true,
+        json: async () => ({ code: 200, content: rows[url.split("/").at(-1)] }),
+    });
+    const link = (no, seconds) => dom.window.resolveActivityReplay(record, String(no), at + seconds * 1000);
+    assert.equal(await link(100, 42.8), "https://chzzk.naver.com/video/100?currentTime=42");
+    assert.equal(await link(100, split), "https://chzzk.naver.com/video/200?currentTime=0");
+    assert.equal(await link(200, split + 7), "https://chzzk.naver.com/video/200?currentTime=7");
+    assert.equal(await link(200, 14), "https://chzzk.naver.com/video/100?currentTime=14");
+    assert.equal(await link(200, split + 120), null);
+    assert.equal(await link(100, -1), null);
+    rows[200].duration = 119.5;
+    assert.equal(await link(200, split + 119.4), "https://chzzk.naver.com/video/200?currentTime=119");
+    assert.equal(await link(200, split + 119.5), null);
+    rows[100].nextVideo = { videoNo: 200, duration: split };
+    assert.equal(await link(200, split + 1), null, "cyclic broadcast metadata cannot authorize a seek");
+    rows[100].nextVideo = { videoNo: 50 };
+    assert.equal(await link(200, split + 1), null, "a confirmed link can still have an unconfirmed older neighbour");
+    delete rows[100].nextVideo;
+    rows[200].nextVideo = { videoNo: 100 };
+    assert.equal(
+        await link(200, 10),
+        null,
+        "an older neighbour of unknown length cannot mark the current replay as first"
+    );
+    rows[200].nextVideo = { videoNo: 999, duration: split };
+    assert.equal(await link(200, 10), null, "an incomplete chain cannot locate an activity");
+    rows[100].liveId = "11";
+    assert.equal(await link(100, 10), null, "same start but a conflicting live ID");
+    rows[100].liveId = "10";
+    rows[100].channel.channelId = "a".repeat(32);
+    assert.equal(await link(100, 10), null, "same clock on another channel");
+    delete record.liveOpenDate;
+    assert.equal(await link(100, 10), null);
+});
+
+test("stored chat and live donation times open verified positions without writing a different replay cache", async (t) => {
+    const { document, dom, chrome, row } = await openHistory(t, (history) => {
+        const value = history.entries["live:alpha"];
+        Object.assign(value, {
+            channelId: REPLAY_CHANNEL,
+            replayVideoNo: "4321",
+            liveId: "777",
+            liveOpenDate: "2026-09-10 10:00:00",
+        });
+        addChats(value, "2026-09-10", 2);
+        const at = value.activities[0].at + 10000;
+        value.activities.push({ id: `viewer:${at}:10`, at, kind: "donation", amount: 100, text: "후원" });
+    });
+    const detail = {
+        videoNo: 4321,
+        videoType: "REPLAY",
+        duration: 600,
+        channel: { channelId: REPLAY_CHANNEL },
+        liveOpenDate: "2026-09-10 10:00:00",
+        liveId: "777",
+    };
+    dom.window.fetch = async () => ({ ok: true, json: async () => ({ code: 200, content: detail }) });
+    let pending;
+    dom.window.open = () => (pending = { closed: false, location: { href: "" } });
+    const open = async (element, expected) => {
+        pending = null;
+        element.click();
+        await waitForCondition(() => pending?.location.href === expected);
+    };
+    row("live:alpha").querySelector(".history-entry-chats").click();
+    await open(
+        row("live:alpha").querySelector(".history-activity-replay"),
+        "https://chzzk.naver.com/video/4321?currentTime=1"
+    );
+    document.getElementById("activityViewTab").click();
+    await open(
+        document.querySelector("#activityList .history-activity-replay"),
+        "https://chzzk.naver.com/video/4321?currentTime=1"
+    );
+    document.getElementById("activityType").value = "donation";
+    dispatch(dom.window, document.getElementById("activityType"), "change");
+    await open(
+        document.querySelector("#activityList .history-activity-replay"),
+        "https://chzzk.naver.com/video/4321?currentTime=10"
+    );
+    detail.duration = 3;
+    await open(document.querySelector("#activityList .history-activity-replay"), "https://chzzk.naver.com/video/4321");
+    assert.equal(
+        chrome.testState.runtimeMessages.filter((message) => message.operation?.kind === "setReplayVideoNo").length,
+        0
+    );
+});
+
 test("a resolved replay opens even when saving its link to history fails", async (t) => {
     const video = { videoNo: 4321, videoType: "REPLAY", liveId: "777" };
     const f = await openReplayLookup(t, (url) => ({
@@ -740,4 +848,170 @@ test("history descriptions and status messages omit polite endings", () => {
             file
         );
     }
+});
+
+test("watch patterns split recorded KST ranges, count overlapping channels once and preserve unknown time", async (t) => {
+    const sunday = "2026-09-06";
+    const monday = "2026-09-07";
+    const at = (date, time) => Date.parse(date + "T" + time + ":00+09:00");
+    const r = (date, start, endDate, end) => ({ startAt: at(date, start), endAt: at(endDate, end) });
+    const a1 = r(sunday, "23:59", monday, "00:03");
+    const a2 = r(monday, "05:59", monday, "06:01");
+    const b = r(monday, "00:01", monday, "00:04");
+    const { dom, document, chrome } = await openHistory(
+        t,
+        (history) => {
+            const actual = (id, title, dates, seconds, ranges) => {
+                const record = entry("live:" + id, title, monday, seconds);
+                record.dailySeconds = dates;
+                record.firstWatchedAt = ranges[0].startAt;
+                record.lastWatchedAt = ranges.at(-1).endAt;
+                record.sessionDetails = [
+                    {
+                        id,
+                        enteredAt: record.firstWatchedAt,
+                        leftAt: record.lastWatchedAt,
+                        watchedSeconds: seconds,
+                        dailySeconds: dates,
+                        watchedRanges: ranges,
+                    },
+                ];
+                return record;
+            };
+            const undated = entry("live:undated", "날짜 미상", monday, 120);
+            undated.dailySeconds = {};
+            history.entries = {
+                a: actual("a", "선택 방송", { [sunday]: 60, [monday]: 300 }, 360, [a1, a2]),
+                b: actual("b", "동시 방송", { [monday]: 210 }, 210, [b]),
+                dated: entry("live:dated", "일별 기록", monday, 90),
+                undated,
+            };
+        },
+        3
+    );
+    const pattern = document.getElementById("watchPattern"),
+        summary = document.getElementById("watchPatternSummary");
+    assert.equal(pattern.open, false);
+    assert.equal(document.querySelectorAll("#watchPatternHours li").length, 0);
+    pattern.querySelector("summary").click();
+    await waitForCondition(() => document.querySelectorAll("#watchPatternHours li").length > 0);
+    const bucket = (id, label) =>
+        [...document.getElementById(id).querySelectorAll("li")]
+            .find((row) => row.querySelector(".history-pattern-label").textContent === label)
+            ?.querySelector(".history-pattern-value").textContent;
+    const week = (label) => bucket("watchPatternWeekdays", label),
+        band = (label) => bucket("watchPatternHours", label);
+    const scope = document.getElementById("historyScope"),
+        search = document.getElementById("historySearch");
+    assert.match(summary.textContent, /2026.09 · 라이브 3개 · 시청 9분/);
+    assert.equal(week("일요일"), "1분 · 11.1%");
+    assert.equal(week("월요일"), "8분 · 88.9%");
+    assert.equal(band("00–06시"), "5분 · 55.6%");
+    assert.equal(band("06–12시"), "1분 · 11.1%");
+    assert.equal(band("12–18시"), "0초 · 0%");
+    assert.equal(band("18–24시"), "1분 · 11.1%");
+    assert.equal(band("시간대 미상"), "2분 · 22.2%");
+    assert.match(document.getElementById("watchPatternNote").textContent, /전체 기간/);
+    scope.value = "all";
+    dispatch(dom.window, scope, "change");
+    assert.match(summary.textContent, /전체 기간 · 라이브 4개 · 시청 11분/);
+    assert.equal(week("요일 미상"), "2분 · 18.2%");
+    assert.equal(band("시간대 미상"), "4분 · 36.4%");
+    search.value = "선택 방송";
+    dispatch(dom.window, search, "input");
+    assert.match(summary.textContent, /라이브 1개 · 시청 6분/);
+    assert.equal(band("시간대 미상"), undefined);
+    assert.equal(band("00–06시"), "4분 · 66.7%");
+    search.value = "아무 일치 없음";
+    dispatch(dom.window, search, "input");
+    assert.match(summary.textContent, /기록 없음/);
+    assert.equal(document.getElementById("watchPatternCharts").hidden, true);
+    search.value = "";
+    dispatch(dom.window, search, "input");
+    document.querySelector('#calendarDays [data-date="2026-09-07"]').click();
+    assert.match(summary.textContent, /2026.09.07 · 라이브 3개 · 시청 8분/);
+    assert.equal(week("월요일"), "8분 · 100%");
+    assert.equal(week("일요일"), "0초 · 0%");
+    assert.equal(band("18–24시"), "0초 · 0%");
+    assert.equal(chrome.testState.runtimeMessages.length, 0);
+});
+
+test("watch patterns exclude unverified dates and do not spread legacy totals across entry and exit hours", async (t) => {
+    const { dom, document } = await openHistory(
+        t,
+        (history) => {
+            const record = entry("live:legacy", "합계만 보관", "2026-09-10", 180);
+            record.dailySeconds = { "2026-08-40": 120 };
+            record.lastWatchedAt = record.firstWatchedAt + 8 * 60 * 60 * 1000;
+            history.entries = { legacy: record };
+        },
+        0
+    );
+    await waitForCondition(() => document.getElementById("totalLiveCount").textContent === "1개");
+    document.querySelector("#watchPattern summary").click();
+    await waitForCondition(() => document.getElementById("watchPatternSummary").textContent.includes("기록 없음"));
+    const scope = document.getElementById("historyScope");
+    scope.value = "all";
+    dispatch(dom.window, scope, "change");
+    const hours = document.getElementById("watchPatternHours").textContent,
+        days = document.getElementById("watchPatternWeekdays").textContent;
+    assert.match(hours, /시간대 미상3분 · 100%/);
+    assert.match(days, /요일 미상3분 · 100%/);
+    assert.match(days, /목요일0초 · 0%/);
+});
+
+test("month navigation splits a single broadcast at KST midnight without counting other days of the session", async (t) => {
+    const { document } = await openHistory(
+        t,
+        (history) => {
+            const value = entry("live:boundary", "월 경계", "2026-08-31", 180);
+            const start = Date.parse("2026-08-31T23:59:00+09:00"),
+                end = start + 180000;
+            value.firstWatchedAt = start;
+            value.lastWatchedAt = end;
+            value.dailySeconds = { "2026-08-31": 60, "2026-09-01": 120 };
+            value.sessionDetails = [
+                {
+                    id: "cross",
+                    enteredAt: start,
+                    leftAt: end,
+                    dailySeconds: value.dailySeconds,
+                    watchedSeconds: 180,
+                    watchedRanges: [{ startAt: start, endAt: end }],
+                },
+            ];
+            history.entries = { boundary: value };
+        },
+        1
+    );
+    const summary = document.getElementById("watchPatternSummary"),
+        hours = document.getElementById("watchPatternHours");
+    document.querySelector("#watchPattern summary").click();
+    await waitForCondition(() => summary.textContent.includes("2026.09"));
+    assert.match(summary.textContent, /라이브 1개 · 시청 2분/);
+    assert.match(hours.textContent, /00–06시2분 · 100%/);
+    document.getElementById("prevMonth").click();
+    assert.match(summary.textContent, /2026.08 · 라이브 1개 · 시청 1분/);
+    assert.match(hours.textContent, /18–24시1분 · 100%/);
+    assert.match(document.getElementById("watchPatternWeekdays").textContent, /월요일1분 · 100%/);
+});
+
+test("conflicting dated totals do not inflate an older all-time watch record or invent its weekday", async (t) => {
+    const { document, dom } = await openHistory(
+        t,
+        (history) => {
+            const value = entry("live:conflict", "예전 기록", "2026-09-07", 120);
+            value.dailySeconds = { "2026-09-07": 100, "2026-09-08": 100 };
+            history.entries = { conflict: value };
+        },
+        1
+    );
+    const scope = document.getElementById("historyScope");
+    scope.value = "all";
+    dispatch(dom.window, scope, "change");
+    document.querySelector("#watchPattern summary").click();
+    await waitForCondition(() => document.querySelectorAll("#watchPatternWeekdays li").length > 0);
+    assert.match(document.getElementById("watchPatternSummary").textContent, /시청 2분/);
+    assert.match(document.getElementById("watchPatternWeekdays").textContent, /요일 미상2분 · 100%/);
+    assert.match(document.getElementById("watchPatternHours").textContent, /시간대 미상2분 · 100%/);
 });

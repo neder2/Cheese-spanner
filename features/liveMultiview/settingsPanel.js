@@ -39,6 +39,31 @@
         let addTab = "search",
             followingChannels = null;
         const searchResults = new Map();
+        // 제거한 보조 한 개만 같은 방송의 열린 멀티뷰 안에서 잠시 되돌릴 수 있어요.
+        const removedAudioLifetime = 5 * 60 * 1000;
+        let removedAudio = null,
+            removedAudioButton = null,
+            removedAudioTimer = 0;
+        function forgetRemovedAudio() {
+            clearTimeout(removedAudioTimer);
+            removedAudio = null;
+            if (removedAudioButton && document.activeElement === removedAudioButton)
+                panel?.querySelector('[data-action="add"]')?.focus({ preventScroll: true });
+            removedAudioButton?.remove();
+            removedAudioButton = null;
+        }
+        function rememberRemovedAudio(player, entry) {
+            forgetRemovedAudio();
+            if (!entry || !player.hls || !player.video?.isConnected || player.error) return;
+            removedAudio = {
+                id: entry.id,
+                name: String(player.name || entry.id).slice(0, 80),
+                volume: entry.volume,
+                muted: entry.muted,
+                expires: Date.now() + removedAudioLifetime,
+            };
+            removedAudioTimer = setTimeout(forgetRemovedAudio, removedAudioLifetime);
+        }
         function cancelSearch() {
             searchController?.abort();
             searchController = null;
@@ -351,6 +376,12 @@
                 items[next].focus();
             });
             section.append(tabs);
+            if (removedAudio && Date.now() < removedAudio.expires) {
+                const { id, name, muted, volume } = removedAudio;
+                const sound = `${muted ? "음소거, " : ""}음량 ${Math.round(volume * 100)}%`;
+                removedAudioButton = button(`${name} · 이전 소리로 다시 추가 (${sound})`, "restore-audio", id);
+                section.append(removedAudioButton);
+            }
             for (const name of ["search", "following"]) {
                 const pane = el("div", "bcmv-add-pane");
                 pane.id = `${PANEL_ID}-add-${name}-pane`;
@@ -417,6 +448,222 @@
                       : "방송 여부 확인 불가"
             );
         }
+        // Only explicit clicks on owned controls read or change the one profile-local channel list.
+        const presetActions = new WeakMap();
+        function presetSection() {
+            const section = el("section", "bcmv-preset");
+            const actions = el("div", "bcmv-preset-actions");
+            const result = el("div");
+            const status = el("p", "bcmv-notice");
+            status.setAttribute("role", "status");
+            const channel = routeId;
+            const path = location.pathname;
+            let busy = false;
+            const current = () => panel?.contains(section) && routeId === channel && location.pathname === path;
+            const capture = () =>
+                state.channels.map(({ id }) => ({
+                    id,
+                    name: globalThis.CheeseSpannerChatMultiview.normalizeChannelName(players.get(id)?.name),
+                }));
+            function control(label, action, run) {
+                const node = button(label, "preset-" + action);
+                presetActions.set(node, () => {
+                    if (current() && section.contains(node) && !busy && !node.disabled) run();
+                });
+                return node;
+            }
+            async function request(action, extra = {}) {
+                busy = true;
+                section.setAttribute("aria-busy", "true");
+                let reply;
+                try {
+                    reply = await root.utils.runtimeSendMessage({
+                        type: "cheese-spanner:live-multiview-preset",
+                        action,
+                        route: channel,
+                        ...extra,
+                    });
+                    if (current() && !reply?.ok) {
+                        result.replaceChildren();
+                        text(
+                            status,
+                            reply?.conflict
+                                ? "다른 탭에서 변경한 목록. 저장 목록을 다시 열어 확인."
+                                : "저장 목록 처리 실패. 다시 시도."
+                        );
+                    }
+                } catch {
+                    if (current()) text(status, "저장 목록 처리 실패. 다시 시도.");
+                } finally {
+                    busy = false;
+                    section.removeAttribute("aria-busy");
+                }
+                return current() && reply?.ok ? reply : null;
+            }
+            function list(saved) {
+                result.replaceChildren();
+                text(
+                    status,
+                    saved ? `저장된 방송 ${saved.length}개. 선택한 방송만 음소거로 추가.` : "저장된 구성 없음."
+                );
+                if (!saved) return;
+                const ul = el("ul", "bcmv-preset-list");
+                for (const entry of saved) {
+                    const row = el("li");
+                    const duplicate = state.channels.some((item) => item.id === entry.id);
+                    const full = state.channels.length >= model.MAX_VIEWS;
+                    const name = entry.name || entry.id;
+                    const add = control(duplicate ? "추가됨" : full ? "빈 자리 없음" : "음소거로 추가", "add", () => {
+                        onAdd("https://chzzk.naver.com/live/" + entry.id);
+                    });
+                    add.disabled = duplicate || full;
+                    add.setAttribute("aria-label", name + " " + add.textContent);
+                    row.append(el("span", "", name), add);
+                    ul.append(row);
+                }
+                result.append(
+                    ul,
+                    control("저장 목록 삭제", "delete", () => confirm("delete", saved, null))
+                );
+            }
+            function confirm(action, saved, next) {
+                const deleting = action === "delete";
+                result.replaceChildren();
+                text(
+                    status,
+                    deleting ? "이 프로필의 저장 목록 삭제 확인." : "기존 저장 목록을 현재 방송 구성으로 덮어쓰기."
+                );
+                const approve = control(deleting ? "삭제 확인" : "덮어쓰기 확인", "confirm", async () => {
+                    if (!deleting && JSON.stringify(capture()) !== JSON.stringify(next)) {
+                        result.replaceChildren();
+                        text(status, "현재 구성이 변경됨. 저장할 구성을 다시 확인.");
+                        save.focus();
+                        return;
+                    }
+                    const reply = await request(action, { expected: saved, ...(deleting ? {} : { channels: next }) });
+                    if (!reply) return;
+                    list(reply.saved);
+                    text(status, deleting ? "저장 목록 삭제 완료." : "현재 구성 저장 완료.");
+                    open.focus();
+                });
+                const cancel = control("취소", "cancel", () => {
+                    list(saved);
+                    open.focus();
+                });
+                result.append(
+                    el("p", "bcmv-notice", "저장된 방송 · " + saved.map((entry) => entry.name || entry.id).join(" · ")),
+                    approve,
+                    cancel
+                );
+                cancel.focus();
+            }
+            function pickChat() {
+                const target = root.previewLiveChatAddition?.();
+                result.replaceChildren();
+                if (!target) {
+                    text(status, "채팅 멀티뷰 구성을 확인한 뒤 다시 시도.");
+                    return;
+                }
+                const candidates = capture().filter((entry) => entry.id !== routeId);
+                if (!candidates.length) {
+                    text(status, "채팅에 추가할 보조 방송 없음.");
+                    return;
+                }
+                const capacity = globalThis.CheeseSpannerChatMultiview.MAX_CHANNELS - target.existing.length;
+                const selected = new Set();
+                const ul = el("ul", "bcmv-preset-list");
+                const choices = [];
+                const confirmChat = control("선택한 채팅 추가·열기", "chat-confirm", async () => {
+                    const channels = candidates
+                        .filter((entry) => selected.has(entry.id))
+                        .map((entry) => ({ channelId: entry.id, channelName: entry.name }));
+                    const stillSelected = () =>
+                        current() &&
+                        result.contains(confirmChat) &&
+                        channels.every((c) => state.channels.some((entry) => entry.id === c.channelId));
+                    busy = true;
+                    let outcome;
+                    try {
+                        outcome = await target.apply(channels, stillSelected);
+                    } finally {
+                        busy = false;
+                    }
+                    if (!current()) return;
+                    result.replaceChildren();
+                    text(
+                        status,
+                        outcome === "saved"
+                            ? "선택한 채팅 추가 완료."
+                            : "채팅 목록 변경 또는 저장 실패. 현재 목록을 다시 확인."
+                    );
+                    if (outcome !== "saved") chat.focus();
+                });
+                function update() {
+                    for (const [node, id] of choices) {
+                        const picked = selected.has(id);
+                        node.setAttribute("aria-pressed", String(picked));
+                        node.disabled = target.existing.includes(id) || (!picked && selected.size >= capacity);
+                    }
+                    confirmChat.disabled = selected.size === 0;
+                }
+                for (const entry of candidates) {
+                    const name = entry.name || entry.id;
+                    const row = el("li");
+                    const node = control(
+                        name + (target.existing.includes(entry.id) ? " · 추가됨" : ""),
+                        "chat-select",
+                        () => {
+                            if (selected.has(entry.id)) selected.delete(entry.id);
+                            else if (selected.size < capacity) selected.add(entry.id);
+                            update();
+                        }
+                    );
+                    choices.push([node, entry.id]);
+                    row.append(node);
+                    ul.append(row);
+                }
+                text(
+                    status,
+                    capacity
+                        ? `빈 칸 ${capacity}개. 선택한 방송은 기존 목록에 추가되며 열려 있는 다른 채팅 멀티뷰에도 반영.`
+                        : "채팅 4칸 사용 중. 현재 목록 유지."
+                );
+                const cancel = control("취소", "cancel", () => {
+                    result.replaceChildren();
+                    text(status, "");
+                    chat.focus();
+                });
+                result.append(ul, confirmChat, cancel);
+                update();
+                (choices.find(([node]) => !node.disabled)?.[0] || cancel).focus();
+            }
+            const chat = control("보조 방송 채팅 선택", "chat", pickChat);
+            const open = control("저장 목록 열기", "open", async () => {
+                const reply = await request("list");
+                if (reply) list(reply.saved);
+            });
+            const save = control("현재 구성 저장", "save", async () => {
+                const next = capture();
+                const reply = await request("list");
+                if (!reply) return;
+                if (JSON.stringify(capture()) !== JSON.stringify(next)) {
+                    text(status, "현재 구성이 변경됨. 저장할 구성을 다시 확인.");
+                    return;
+                }
+                if (reply.saved) return confirm("save", reply.saved, next);
+                const created = await request("save", { expected: null, channels: next });
+                if (created) {
+                    list(created.saved);
+                    text(status, "현재 구성 저장 완료.");
+                }
+            });
+            actions.append(save, open);
+            section.append(el("h4", "bcmv-section-title", "방송 구성"), actions);
+            if (root.previewLiveChatAddition?.()) section.append(chat);
+            section.append(status, result);
+            return section;
+        }
+
         function panelCells(cells = model.layout(state).cells) {
             return model.orderedCells(cells, routeId);
         }
@@ -759,6 +1006,7 @@
             }
         }
         function renderPanel(id, focus = false) {
+            const previousControl = id && id === panelId && !focus && root.multiviewView.action(document.activeElement);
             cancelSearch();
             if (id !== "add") followingChannels = null;
             if (panelId === "add" || id === "add") message = "";
@@ -841,6 +1089,18 @@
                 );
                 row.append(move);
                 list.append(row);
+                if (state.channels.length > 1) {
+                    const audio = el("div", "bcmv-stream-audio");
+                    const solo = button("이 방송만 듣기", "solo-audio", entry.id);
+                    const hint = el("span", "bcmv-solo-hint", "영상 연결 대기");
+                    hint.id = `${PANEL_ID}-solo-${entry.id}`;
+                    solo.disabled = true;
+                    solo.setAttribute("aria-label", `${entry.id.slice(0, 8)} 이 방송만 듣기`);
+                    solo.setAttribute("aria-pressed", "false");
+                    solo.setAttribute("aria-describedby", hint.id);
+                    audio.append(solo, hint);
+                    row.append(audio);
+                }
                 if (entry.id === routeId) {
                     row.append(el("p", "bcmv-quality-main", "화질은 메인 플레이어에서 조절."));
                     continue;
@@ -886,7 +1146,7 @@
             moveStatus.setAttribute("data-bcmv-move-status", "");
             moveStatus.setAttribute("role", "status");
             panel.append(moveStatus);
-            panel.append(el("h4", "bcmv-section-title", "화면 배치"), option, actions);
+            panel.append(el("h4", "bcmv-section-title", "화면 배치"), option, actions, presetSection());
             for (const player of players.values()) updatePlayer(player);
             const status = el("p", "bcmv-notice", message);
             status.setAttribute("data-bcmv-notice", "");
@@ -906,7 +1166,29 @@
             if (panelFocusId) {
                 focusPanelStream(panelFocusId);
                 panelFocusId = null;
+            } else if (previousControl?.action === "solo-audio") {
+                const replacement = list.querySelector(
+                    `[data-action="solo-audio"][data-channel="${previousControl.channel}"]:not(:disabled)`
+                );
+                (replacement || add).focus({ preventScroll: true });
             }
+        }
+        function updateSoloButton(row, player, name) {
+            const solo = row.querySelector('[data-action="solo-audio"]');
+            if (!solo) return;
+            const selected = players.soloId === player.id;
+            const reason = players.soloUnavailable(player);
+            const disabled = Boolean(reason);
+            if (disabled && document.activeElement === solo) focusPanelStream(player.id);
+            const description = reason || (selected ? "다시 눌러 해제" : players.soloId ? "이 방송으로 전환" : "");
+            const label = `${name} 이 방송만 듣기`;
+            const title = description || "다른 방송을 잠시 음소거";
+            if (solo.disabled !== disabled) solo.disabled = disabled;
+            if (solo.getAttribute("aria-pressed") !== String(selected))
+                solo.setAttribute("aria-pressed", String(selected));
+            if (solo.getAttribute("aria-label") !== label) solo.setAttribute("aria-label", label);
+            if (solo.title !== title) solo.title = title;
+            text(row.querySelector(".bcmv-solo-hint"), description);
         }
         function updatePlayer(player) {
             const row = panelId && panel?.querySelector(`.bcmv-stream[data-channel="${player.id}"]`);
@@ -919,6 +1201,7 @@
                 `${player.main ? "메인" : "서브"} ${name} 위치 변경`
             );
             row.querySelector('[data-action="remove"]')?.setAttribute("aria-label", `${name} 제거`);
+            updateSoloButton(row, player, name);
             if (player.main) return;
             const quality = row.querySelector(".bcmv-quality select");
             const heights = [...players.qualityLevels(player).keys()].sort((a, b) => b - a);
@@ -1039,6 +1322,7 @@
             host = chatButton = chatHeader = launcher = null;
         }
         function clear() {
+            forgetRemovedAudio();
             release();
             generation += 1;
             panelId = panelNavigation = panelFocusId = null;
@@ -1065,6 +1349,23 @@
             return true;
         }
         return {
+            rememberRemovedAudio,
+            forgetRemovedAudio,
+            addedChannel(id) {
+                if (removedAudio?.id === id) forgetRemovedAudio();
+            },
+            restoreAudio(control) {
+                if (!removedAudio || control !== removedAudioButton || panelId !== "add" || !panel?.contains(control))
+                    return;
+                if (Date.now() >= removedAudio.expires || model.channelFromUrl(location.href) !== routeId) {
+                    forgetRemovedAudio();
+                    return;
+                }
+                onAdd(`https://chzzk.naver.com/live/${removedAudio.id}`, null, removedAudio);
+            },
+            presetAction(control) {
+                presetActions.get(control)?.();
+            },
             addSearchResult(id) {
                 const result = searchResults.get(id);
                 if (

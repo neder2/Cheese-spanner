@@ -40,7 +40,7 @@
 (() => {
     const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const SKIP_PILL_ID = "cheese-spanner-skip-pill";
-    const SKIP_PILL_TOOLTIP = "휠 조절, 클릭 초기화";
+    const SKIP_PILL_TOOLTIP = "휠 또는 ↑↓ 조절, 클릭 초기화";
     const LIVE_FAST_FORWARD_BUTTON_ID = "cheese-spanner-live-fast-forward";
     const SKIP_STYLE_ID = "cheese-spanner-skip-style";
     const VOD_TIME_SELECTOR = "div.pzp-vod-time, div.pzp-pc__vod-time, div.pzp-pc-vod-time";
@@ -1536,6 +1536,27 @@
         const pill = document.createElement("button");
         pill.id = SKIP_PILL_ID;
         pill.type = "button";
+        pill.addEventListener("keydown", (event) => {
+            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+            if (
+                !event.isTrusted ||
+                event.defaultPrevented ||
+                event.isComposing ||
+                event.keyCode === 229 ||
+                event.altKey ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.shiftKey ||
+                document.activeElement !== pill ||
+                event.target !== pill ||
+                !isPillEnabled()
+            )
+                return;
+            event.preventDefault();
+            event.stopPropagation();
+            const direction = event.key === "ArrowUp" ? 1 : -1;
+            setSkipSeconds(Math.max(1, skipSeconds + direction * featureOptions.skipWheelStep));
+        });
 
         pill.innerHTML = `
 <span class="bc-value">${skipSeconds}</span><span class="bc-unit">s</span>

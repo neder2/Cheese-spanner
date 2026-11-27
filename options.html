@@ -170,28 +170,44 @@
 
             <form id="optionsForm" class="settings-form" novalidate>
                 <div class="settings-toolbar">
-                    <div class="search-field">
-                        <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            aria-hidden="true"
-                        >
-                            <circle cx="11" cy="11" r="7" />
-                            <path d="m16.5 16.5 4.5 4.5" />
-                        </svg>
-                        <input
-                            id="settingsSearch"
-                            type="search"
-                            placeholder="화질, 볼륨, 채팅 등 설정 검색"
-                            autocomplete="off"
-                            aria-label="설정 검색"
-                        />
-                        <span id="searchStatus" class="search-status" aria-live="polite" hidden></span>
+                    <div class="filter-tools">
+                        <div class="search-field">
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <circle cx="11" cy="11" r="7" />
+                                <path d="m16.5 16.5 4.5 4.5" />
+                            </svg>
+                            <input
+                                id="settingsSearch"
+                                type="search"
+                                placeholder="화질, 볼륨, 채팅 등 설정 검색"
+                                autocomplete="off"
+                                aria-label="설정 검색"
+                            />
+                            <span id="searchStatus" class="search-status" aria-live="polite" hidden></span>
+                        </div>
+                        <label class="nondefault-filter">
+                            <input
+                                type="checkbox"
+                                id="nonDefaultOnly"
+                                autocomplete="off"
+                                aria-describedby="nonDefaultBasis"
+                            />
+                            기본값과 다른 설정만 보기
+                            <small id="nonDefaultBasis" aria-hidden="true">저장 전 변경 포함</small>
+                        </label>
                     </div>
+                    <details id="settingsSearchJump" class="settings-search-jump" hidden>
+                        <summary>설정으로 이동</summary>
+                        <div class="search-jump-list"></div>
+                    </details>
                     <nav class="tab-bar" role="tablist" aria-label="설정 카테고리">
                         <button
                             type="button"
@@ -453,6 +469,7 @@
                 </div>
 
                 <p id="searchEmpty" class="search-empty hidden" role="status"></p>
+                <section id="nonDefaultList" class="search-jump-list" aria-label="기본값과 다른 설정" hidden></section>
 
                 <section class="settings-card" id="tab-panel-player" role="tabpanel" aria-labelledby="tab-player">
                     <div class="section-heading">
@@ -554,15 +571,16 @@
                                 <input type="checkbox" data-option="streamInfoEnabled" />
                             </label>
                             <p class="setting-note">톱니바퀴 → 스트림 정보 열기. 해상도·비트레이트·버퍼·FPS 확인.</p>
-                            <label class="toggle-row"
+                            <label class="toggle-row" data-search-aliases="합방 동시시청"
                                 ><span><strong>라이브 멀티뷰</strong></span
                                 ><input type="checkbox" data-option="liveMultiviewEnabled"
                             /></label>
                             <p class="setting-note">플레이어 하단 격자 버튼에서 최대 6개 방송 동시 시청.</p>
-                            <label class="toggle-row">
+                            <label class="toggle-row" data-search-aliases="합방 동시시청">
                                 <span><strong>다시보기 멀티뷰</strong></span>
                                 <input
                                     type="checkbox"
+                                    id="vodMultiviewEnabled"
                                     data-option="vodMultiviewEnabled"
                                     aria-describedby="vod-multiview-help"
                                 />
@@ -571,6 +589,9 @@
                                 메인 포함 최대 6개 영상. 채널을 검색하거나 다시보기 주소를 입력해 같은 방송 시각으로
                                 시청.
                             </p>
+                            <button class="related-option" type="button" data-related-option="vodBroadcastClockEnabled">
+                                다시보기 시청 화면 설정으로 이동
+                            </button>
                             <label class="toggle-row">
                                 <span><strong>휠로 화면 확대</strong></span>
                                 <input type="checkbox" data-option="playerZoomEnabled" />
@@ -651,6 +672,26 @@
                             >
                         </summary>
                         <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>화면 캡처 버튼</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="videoScreenshotEnabled"
+                                    aria-describedby="videoScreenshotHelp"
+                                />
+                            </label>
+                            <p class="setting-note" id="videoScreenshotHelp">
+                                라이브·다시보기 메인 영상의 원본 프레임을 PNG로 캡처. 파일은 Chrome 다운로드 위치에
+                                저장.
+                            </p>
+                            <label class="toggle-row" data-depends-on="videoScreenshotEnabled">
+                                <span><strong>캡처 동작</strong></span>
+                                <select class="quality-select" data-option="videoScreenshotAction">
+                                    <option value="file">파일 저장</option>
+                                    <option value="clipboard">클립보드 복사</option>
+                                    <option value="both">저장 및 복사</option>
+                                </select>
+                            </label>
                             <label class="toggle-row">
                                 <span><strong>녹화 버튼</strong></span>
                                 <input
@@ -929,6 +970,15 @@
                                 <span><strong>컴프레서 버튼 표시</strong></span>
                                 <input type="checkbox" data-option="audioCompressorEnabled" />
                             </label>
+                            <label class="toggle-row" data-depends-on="audioCompressorEnabled">
+                                <span><strong>압축 프리셋</strong></span>
+                                <select class="quality-select" id="compressorPreset">
+                                    <option value="default">기본</option>
+                                    <option value="light">약하게</option>
+                                    <option value="night">야간 · 큰 소리 줄이기</option>
+                                    <option value="custom" disabled>직접 설정</option>
+                                </select>
+                            </label>
                             <div class="number-grid" data-depends-on="audioCompressorEnabled">
                                 <label
                                     ><span>임계값</span
@@ -1036,7 +1086,7 @@
                                     <span><strong>내 채팅 기록 저장</strong></span>
                                     <input type="checkbox" data-option="liveWatchHistoryChatEnabled" />
                                 </label>
-                                <label class="toggle-row">
+                                <label class="toggle-row" data-search-aliases="도네 도네이션">
                                     <span><strong>내 일반 후원 기록 저장</strong></span>
                                     <input type="checkbox" data-option="liveWatchHistoryDonationEnabled" />
                                 </label>
@@ -1223,7 +1273,7 @@
                             <button id="resetPanelSizes" class="secondary-button panel-size-reset" type="button">
                                 저장한 채팅·사이드바 크기 초기화
                             </button>
-                            <label class="toggle-row">
+                            <label class="toggle-row" data-search-aliases="합방 동시시청">
                                 <span><strong>채팅 멀티뷰</strong></span>
                                 <input
                                     type="checkbox"
@@ -1239,6 +1289,18 @@
                                 <input type="checkbox" data-option="chatTimestampEnabled" />
                             </label>
                             <label class="toggle-row">
+                                <span><strong>타임머신 채팅 동기화 (실험)</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="timeMachineChatEnabled"
+                                    aria-describedby="time-machine-chat-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="time-machine-chat-help">
+                                뒤로 감으면 실시간 목록을 가리고, 현재 탭에서 최근 2분간 수신한 일반 채팅 중 다시 확인한
+                                본문만 표시.
+                            </p>
+                            <label class="toggle-row">
                                 <span><strong>다시보기 채팅 타임스탬프 표시</strong></span>
                                 <input
                                     type="checkbox"
@@ -1251,7 +1313,7 @@
                                 <span><strong>다시보기 내 채팅 강조</strong></span>
                                 <input type="checkbox" data-option="vodOwnChatHighlightEnabled" />
                             </label>
-                            <label class="toggle-row">
+                            <label class="toggle-row" data-search-aliases="도네 도네이션">
                                 <span><strong>주간 후원 랭킹 숨기기</strong></span>
                                 <input
                                     type="checkbox"
@@ -1260,7 +1322,7 @@
                                 />
                             </label>
                             <p class="setting-note" id="chat-ranking-help">통나무 파워 랭킹도 함께 숨김.</p>
-                            <label class="toggle-row">
+                            <label class="toggle-row" data-search-aliases="도네 도네이션">
                                 <span><strong>채팅창 후원 메시지 숨기기</strong></span>
                                 <input
                                     type="checkbox"
@@ -1594,7 +1656,11 @@
                         <div class="option-group-body">
                             <label class="toggle-row">
                                 <span><strong>다시보기에 당시 시간 표시</strong></span>
-                                <input type="checkbox" data-option="vodBroadcastClockEnabled" />
+                                <input
+                                    type="checkbox"
+                                    id="vodBroadcastClockEnabled"
+                                    data-option="vodBroadcastClockEnabled"
+                                />
                             </label>
                             <p class="setting-note">
                                 조회수 옆에 시작·종료 시각을 한국 시간으로 표시. 종료 시각은 영상 길이로 계산. 분할
@@ -1623,6 +1689,9 @@
                                 <span>댓글 챕터 자동 추가</span>
                                 <input type="checkbox" data-option="vodCommentAutoChaptersEnabled" />
                             </label>
+                            <button class="related-option" type="button" data-related-option="vodMultiviewEnabled">
+                                다시보기 멀티뷰 설정으로 이동
+                            </button>
                         </div>
                     </details>
 

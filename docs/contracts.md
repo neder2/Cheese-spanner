@@ -223,16 +223,20 @@ MAIN에서는 `#player_layout.chzzk_player.type_vod`에 속한 원본 플레이�
 
 팔로잉 목록 펼침은 워커가 잠금 안에서 바뀐 항목만 기존 값에 합쳐요. 멀티뷰의 채널별 화질과 딜레이는 각각 최대 4,000개까지 저장해요. 한도에서 기존 채널 값은 갱신할 수 있고 새 키를 더하는 설정 요청과 파일 가져오기는 쓰기 전에 거부해요.
 
+## 라이브 멀티뷰 수동 저장 목록
+
+일반 라이브 최상위 탭의 설정 패널은 워커에 `cheese-spanner:live-multiview-preset` 메시지로 `list`, `save`, `delete`를 요청해요. 워커는 현재 탭 주소와 요청의 채널을 대조하고, 최대 6개의 중복 없는 채널 ID·표시명을 `cheese-spanner:live-multiview-preset:v1`에 보관해요. 쓰기는 직렬로 처리하며 확인한 이전 목록과 달라지면 충돌을 반환해요. 열기만 하면 저장 후보를 표시하고, 사용자가 개별 채널을 추가해야 기존 탭의 재생 경로로 이어져요.
+
 ## 설정 파일
 
-파일은 UTF-8 JSON, 1 MiB 이하예요. 최상위는 정확히 `kind:"cheese-spanner.settings-backup"`, `formatVersion:1`, `extensionVersion`(32자 이하), `createdAt`(양의 밀리초), `sync`, `local`이에요.
+파일은 UTF-8 JSON, 1 MiB 이하예요. 최상위는 정확히 `kind:"cheese-spanner.settings-backup"`, `formatVersion`(기본 파일은 1, 제외 목록을 담은 파일은 2), `extensionVersion`(32자 이하), `createdAt`(양의 밀리초), `sync`, `local`이에요.
 
 | 위치    | 구역                                                                                                                                                                                                         |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `sync`  | `options`(옵션 키→값, 알 수 없는 키는 무시 목록), `pinnedChannelIds`(배열), `followingFolders`(폴더 상태)                                                                                                    |
 | `local` | `panelSizes`(`sidebarWidth`·`chatWidth`·`chatHeight`: null 또는 정수), `liveStartChannels`(방송 대상 배열), `multiviewDelays`·`multiviewQualities`(32자리 채널 ID→값, 각 4000개 이하), `chatMultiview`(구성) |
 
-모든 구역은 선택이며 없는 구역은 현재 값을 유지해요. 알 수 없는 최상위·구역 필드, 잘못된 값, 단축키 중복 같은 옵션 조합 오류는 파일 전체를 거부해요. 방송 대상 항목은 `channelId`(소문자 32자리), `channelName`(앞뒤 공백 없음, 100자 이하), 선택 `channelImageUrl`(허용 이미지 URL), `notify`·`autoOpen` boolean만 허용하고 최대 32개예요.
+버전 2에는 `local.categoryExclusions` 배열이 있으며 각 항목은 유형·ID·이름만 담아요. 현재 버전은 두 파일 형식을 모두 읽고, 버전 1만 지원하는 확장은 버전 2 파일을 거절해요. 목록을 합치기로 선택하면 기존 항목과 겹치는 개수·추가 개수를 미리 보여 주며 목록 변경 뒤에는 다시 확인해요. 다른 구역은 선택이며 없는 구역은 현재 값을 유지해요. 알 수 없는 최상위·구역 필드, 잘못된 값, 단축키 중복 같은 옵션 조합 오류는 파일 전체를 거부해요. 방송 대상 항목은 `channelId`(소문자 32자리), `channelName`(앞뒤 공백 없음, 100자 이하), 선택 `channelImageUrl`(허용 이미지 URL), `notify`·`autoOpen` boolean만 허용하고 최대 32개예요.
 
 옵션 페이지만 `{type:"cheese-spanner:settings-backup",version:1,action}`을 보내요. `export`는 `{ok:true,backup,omitted}`이고, 읽지 못했거나 4000개를 넘는 멀티뷰 구역은 일부만 넣지 않고 통째로 빼 `omitted`에 `multiviewDelays`·`multiviewQualities`로 알려요. `preview`(`backup`)는 `{ok:true,fingerprint,summary,ignoredOptionKeys,changes}`예요. `summary.permissionOptionKeys`는 파일이 꺼짐→켜짐으로 바꾸는 권한 필요 옵션이고, 현재 켜져 있지만 파일이 바꾸지 않는 옵션은 권한 요청 대상이 아니에요. `summary.keptOffOptionKeys`는 그 가운데 사용자가 켜지 않기로 고른 옵션이에요. `apply`(`backup`, `fingerprint`, 선택 `disabledOptionKeys`: 파일이 켜려는 권한 필요 옵션에만 적용하고 현재 켜진 옵션은 끄지 않아요)는 `{ok:true,result}`예요. `result.status`는 `applied`(`conflicts`: 적용 중 다른 곳에서 바뀌어 쓰지 않았거나 확인이 필요한 `area:key` 목록), `unchanged`, `reconfirm`(새 `fingerprint`·`summary`·`changes`), `failed`(`stage`, `rolledBack`, `failed`: 되돌리기 읽기·쓰기 실패 키, `conflicted`: 다른 곳에서 바뀌어 되돌리지 않은 키)예요. 적용 단계 순서는 `effects-off`→`sync`→`local`→`live-start`→`effects-on`이에요.
 

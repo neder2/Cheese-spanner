@@ -19,7 +19,8 @@
         createMutationObserverSync,
         createThrottledDomSync,
         ensureUiTheme,
-        fetchJson,
+        getMediaFileNameLabel,
+        mediaFileNamePart,
         getKstDateKey,
         getLiveChannelIdFromPath,
         getMainVideoElement,
@@ -127,57 +128,17 @@
         return hours ? `${hours}:${rest}` : rest;
     }
 
-    function filePart(value, maxLength, maxBytes, fallback) {
-        const clean = String(value || "")
-            // eslint-disable-next-line no-control-regex -- strip characters disallowed in local file names.
-            .replace(/[\\/:*?"<>|\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "_")
-            .replace(/\s+/g, " ")
-            .trim();
-        let result = "";
-        let bytes = 0;
-        for (const char of clean) {
-            const code = char.codePointAt(0);
-            const size = code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
-            if (result.length + char.length > maxLength || bytes + size > maxBytes) break;
-            result += char;
-            bytes += size;
-        }
-        return result.replace(/[. ]+$/, "") || fallback;
-    }
-
     async function recordingFileName(session) {
         if (session.auxiliary) {
             const { media, title, channelName } = session.auxiliary;
-            const safeTitle = filePart(title, 90, 150, `다시보기 ${media.videoNo}`);
-            const safeChannel = filePart(channelName, 40, 60, "스트리머 정보 없음");
+            const safeTitle = mediaFileNamePart(title, 90, 150, `다시보기 ${media.videoNo}`);
+            const safeChannel = mediaFileNamePart(channelName, 40, 60, "스트리머 정보 없음");
             return `${getKstDateKey(session.startedAt)} ${safeTitle} - ${safeChannel}.${session.format.extension}`;
         }
         const live = isLiveRoute(session.path);
         const id = live ? getLiveChannelIdFromPath(session.path) : getVodVideoNoFromPath(session.path);
-        let title = `${live ? "라이브" : "다시보기"} ${id}`;
-        let channelName = "스트리머 정보 없음";
-        try {
-            const endpoint = live
-                ? `service/v3/channels/${encodeURIComponent(id)}/live-detail`
-                : `service/v2/videos/${encodeURIComponent(id)}`;
-            const json = await fetchJson(`https://api.chzzk.naver.com/${endpoint}`, {
-                signal: session.metadataAbort.signal,
-                timeoutMs: 3500,
-            });
-            const detail = json?.content;
-            const verified =
-                json?.code === 200 &&
-                (live
-                    ? detail?.channel?.channelId === id && detail.status === "OPEN"
-                    : String(detail?.videoNo) === String(id));
-            if (verified) {
-                title = filePart(live ? detail.liveTitle : detail.videoTitle, 90, 150, title);
-                channelName = filePart(detail.channel?.channelName, 40, 60, channelName);
-            }
-        } catch (_) {
-            // Unverified DOM titles can belong to the previous SPA route; retain the current ID instead.
-        }
-        return `${getKstDateKey(session.startedAt)} ${title} - ${channelName}.${session.format.extension}`;
+        const label = await getMediaFileNameLabel({ live, id, signal: session.metadataAbort.signal });
+        return `${getKstDateKey(session.startedAt)} ${label}.${session.format.extension}`;
     }
 
     async function startRecording(auxiliary) {

@@ -482,7 +482,7 @@
             return;
         }
         event.stopImmediatePropagation();
-        if (event.type !== "keydown") return;
+        if (event.type !== "keydown" || event.isComposing || event.keyCode === 229) return;
         if (event.key === "Escape") {
             event.preventDefault();
             close(true);

@@ -5,7 +5,7 @@
  * 하는 일: 치지직 콘텐츠가 요청한 설정 쓰기(cheese-spanner:settings-store)를 발신자·키·값·기대값으로 검증하고,
  *   옵션 페이지가 요청한 설정 파일 내보내기·미리보기·적용(cheese-spanner:settings-backup)을 처리해요.
  *   모든 쓰기는 옵션 페이지·설치 정규화·방송 대상 쓰기와 같은 설정 저장 잠금(withOptionsStorageLock) 안에서
- *   최신 값을 읽은 뒤 실행되므로 서로 끼어들지 않아요. 시청 기록·카테고리 제외·안내 큐와 분리돼요.
+ *   최신 값을 읽은 뒤 실행돼요. 제외 목록 합치기는 목록의 쓰기 큐도 거치며, 시청 기록·안내 큐와 분리돼요.
  * 의존: CheeseSpannerSettings(잠금·옵션 발신자 검증), CheeseSpannerSettingsBackup(대상 키·검증·계획).
  */
 (() => {
@@ -31,8 +31,10 @@
         let queue = Promise.resolve();
 
         // Arrival order inside the worker, then the shared Web Lock against options pages.
-        function enqueue(task) {
-            const run = queue.then(() => withLock(task));
+        function enqueue(task, lockExclusions = false) {
+            const run = queue.then(() =>
+                withLock(lockExclusions ? () => globalThis.CheeseSpanner.categoryExclusions.withWriteQueue(task) : task)
+            );
             queue = run.catch(() => {});
             return run;
         }
@@ -156,13 +158,14 @@
             });
         }
 
-        async function readAllLocal() {
+        async function readAllLocal(includeExclusions) {
             const local = chrome.storage?.local;
             if (typeof local?.getKeys === "function") {
                 const keys = await call("local", "getKeys");
                 const wanted = (Array.isArray(keys) ? keys : []).filter(
                     (key) =>
                         Object.values(catalog.PANEL_KEYS).includes(key) ||
+                        (includeExclusions && key === globalThis.CheeseSpanner.categoryExclusions.STORAGE_KEY) ||
                         key === catalog.LIVE_START_CHANNELS_KEY ||
                         key === catalog.CHAT_MULTIVIEW_KEY ||
                         key.startsWith(catalog.MULTIVIEW_DELAY_PREFIX) ||
@@ -179,15 +182,19 @@
             return { sync, local };
         }
 
-        function exportBackup() {
+        function exportBackup(includeExclusions) {
             return enqueue(async () => {
                 const syncKeys = [
                     ...globalThis.CheeseSpannerSettings.OPTION_KEYS,
                     catalog.PINS_KEY,
                     catalog.FOLDERS_KEY,
                 ];
-                const [syncData, localData] = await Promise.all([read("sync", syncKeys), readAllLocal()]);
+                const [syncData, localData] = await Promise.all([
+                    read("sync", syncKeys),
+                    readAllLocal(includeExclusions),
+                ]);
                 return catalog.createBackup({
+                    includeExclusions,
                     syncData,
                     localData,
                     extensionVersion: chrome.runtime?.getManifest?.()?.version || "",
@@ -196,10 +203,11 @@
             });
         }
 
-        function parse(backupValue) {
+        function parse(backupValue, includeExclusions) {
             const parsed = catalog.parseBackup(backupValue);
             if (!parsed.ok)
                 throw failure(parsed.error === "unsupported-version" ? "unsupported-version" : "invalid-file");
+            if (!includeExclusions) delete parsed.backup.local.categoryExclusions;
             return parsed;
         }
 
@@ -211,12 +219,17 @@
             return [...new Set(value)];
         }
 
-        function preview(backupValue, disabledOptionKeys) {
-            const parsed = parse(backupValue);
+        function preview(backupValue, disabledOptionKeys, includeExclusions) {
+            const parsed = parse(backupValue, includeExclusions);
             return enqueue(async () => {
                 const current = await readTargets(parsed.backup);
                 const plan = catalog.planImport(current, parsed.backup, { disabledOptionKeys });
-                if (!plan.ok) throw failure("invalid-file");
+                if (!plan.ok)
+                    throw failure(
+                        ["exclusions-limit", "invalid-stored-exclusions"].includes(plan.error)
+                            ? plan.error
+                            : "invalid-file"
+                    );
                 return {
                     fingerprint: catalog.fingerprint(current, parsed.backup),
                     summary: plan.summary,
@@ -254,8 +267,14 @@
                         continue;
                     }
                     const previous = current[stage.area];
-                    if (Object.hasOwn(previous, key)) restore[key] = previous[key];
-                    else remove.push(key);
+                    if (!Object.hasOwn(previous, key)) remove.push(key);
+                    else if (
+                        stage.area === "local" &&
+                        key === globalThis.CheeseSpanner?.categoryExclusions?.STORAGE_KEY
+                    ) {
+                        // Revert the contents while advancing the revision for every subscribed list.
+                        restore[key] = { ...previous[key], revision: written.get(id).revision + 1 };
+                    } else restore[key] = previous[key];
                 }
                 try {
                     if (Object.keys(restore).length) await call(stage.area, "set", restore);
@@ -271,12 +290,17 @@
             return { conflicted, failed };
         }
 
-        function apply(backupValue, expectedFingerprint, disabledOptionKeys) {
-            const parsed = parse(backupValue);
+        function apply(backupValue, expectedFingerprint, disabledOptionKeys, includeExclusions) {
+            const parsed = parse(backupValue, includeExclusions);
             return enqueue(async () => {
                 const current = await readTargets(parsed.backup);
                 const plan = catalog.planImport(current, parsed.backup, { disabledOptionKeys });
-                if (!plan.ok) throw failure("invalid-file");
+                if (!plan.ok)
+                    throw failure(
+                        ["exclusions-limit", "invalid-stored-exclusions"].includes(plan.error)
+                            ? plan.error
+                            : "invalid-file"
+                    );
                 const print = catalog.fingerprint(current, parsed.backup);
                 if (print !== expectedFingerprint)
                     return {
@@ -344,7 +368,7 @@
                 } finally {
                     chrome.storage?.onChanged?.removeListener?.(listener);
                 }
-            });
+            }, Boolean(parsed.backup.local.categoryExclusions));
         }
 
         function respond(promise, sendResponse, map) {
@@ -380,24 +404,42 @@
                 sendResponse({ ok: false, error: "untrusted-sender" });
                 return false;
             }
-            const allowed = ["type", "version", "action", "backup", "fingerprint", "disabledOptionKeys"];
+            const allowed = [
+                "type",
+                "version",
+                "action",
+                "backup",
+                "fingerprint",
+                "disabledOptionKeys",
+                "includeExclusions",
+            ];
             if (
                 !catalog.isPlainObject(message) ||
                 message.version !== 1 ||
+                (Object.hasOwn(message, "includeExclusions") && typeof message.includeExclusions !== "boolean") ||
                 Object.keys(message).some((key) => !allowed.includes(key))
             ) {
                 sendResponse({ ok: false, error: "invalid-request" });
                 return false;
             }
             try {
-                if (message.action === "export") return respond(exportBackup(), sendResponse, (value) => value);
+                if (message.action === "export")
+                    return respond(exportBackup(message.includeExclusions === true), sendResponse, (value) => value);
                 const disabled = readDisabledKeys(message.disabledOptionKeys);
                 if (message.action === "preview")
-                    return respond(preview(message.backup, disabled), sendResponse, (value) => value);
+                    return respond(
+                        preview(message.backup, disabled, message.includeExclusions === true),
+                        sendResponse,
+                        (value) => value
+                    );
                 if (message.action === "apply" && typeof message.fingerprint === "string")
-                    return respond(apply(message.backup, message.fingerprint, disabled), sendResponse, (result) => ({
-                        result,
-                    }));
+                    return respond(
+                        apply(message.backup, message.fingerprint, disabled, message.includeExclusions === true),
+                        sendResponse,
+                        (result) => ({
+                            result,
+                        })
+                    );
                 throw failure("invalid-request");
             } catch (error) {
                 sendResponse({ ok: false, error: error.code || "invalid-request" });

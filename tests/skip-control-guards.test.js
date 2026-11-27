@@ -159,7 +159,7 @@ test("live and VOD skip pills use the shared Korean player tooltip", async (t) =
         const { document } = await openSkipPage(t, { path, sync: { skipSeconds: 10 } });
         const pill = await waitForSkipPill(document);
         const tooltip = pill.querySelector(":scope > .pzp-button__tooltip--top.cheese-spanner-player-tooltip");
-        assert.equal(tooltip?.textContent, "휠 조절, 클릭 초기화", path);
+        assert.equal(tooltip?.textContent, "휠 또는 ↑↓ 조절, 클릭 초기화", path);
         assert.equal(pill.hasAttribute("title"), false, path);
         assert.equal(pill.getAttribute("aria-label"), "스킵 시간 조절 (10초)", path);
         assert.equal(pill.getAttribute("aria-description"), tooltip.textContent, path);
@@ -271,6 +271,45 @@ test("arrow seek yields to a focused volume slider and settings menu items but k
     const pageEvent = page.keydown(document.body, "ArrowLeft");
     assert.equal(pageEvent.defaultPrevented, true);
     assert.equal(state.currentTime, 100);
+});
+
+test("only the focused skip pill adjusts the interval with unmodified up and down keys", async (t) => {
+    const { chrome, document, dom, state } = await openSkipPage(t, {
+        path: "/video/1",
+        sync: { skipSeconds: 5, skipWheelStep: 3, skipKeyboardEnabled: false },
+    });
+    const pill = await waitForSkipPill(document);
+    const value = () => pill.querySelector(".bc-value").textContent;
+    const key = (name, init = {}) =>
+        new dom.window.KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true, ...init });
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+    assert.equal(dispatchTrusted(input, key("ArrowUp")).defaultPrevented, false);
+    assert.equal(dispatchTrusted(pill, key("ArrowUp")).defaultPrevented, false);
+    pill.focus();
+    for (const init of [
+        { isComposing: true },
+        { keyCode: 229 },
+        { ctrlKey: true },
+        { altKey: true },
+        { shiftKey: true },
+        { metaKey: true },
+    ]) {
+        assert.equal(dispatchTrusted(pill, key("ArrowUp", init)).defaultPrevented, false);
+    }
+    pill.dispatchEvent(key("ArrowUp"));
+    assert.equal(value(), "5");
+    assert.equal(dispatchTrusted(pill, key("ArrowUp")).defaultPrevented, true);
+    assert.equal(value(), "8");
+    for (const expected of ["5", "2", "1", "1"]) {
+        assert.equal(dispatchTrusted(pill, key("ArrowDown")).defaultPrevented, true);
+        assert.equal(value(), expected);
+    }
+    assert.equal(document.activeElement, pill);
+    assert.deepEqual(state.writes, []);
+    await delay(SKIP_SAVE_DEBOUNCE_WAIT_MS);
+    assert.equal(chrome.testState.sync.skipSeconds, 1);
 });
 
 test("skip pill wheel follows the dominant axis and leaves Ctrl+wheel zoom to the browser", async (t) => {

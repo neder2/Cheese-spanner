@@ -36,6 +36,7 @@
     const CHAT_HEADER_TARGETS = `${SIDEBAR}, ${SIDEBAR_HEADER}, ${CHAT_MENU}, #${CHAT_BUTTON_ID}`;
     const COMMAND = "cheese-spanner:vod-multiview:command";
     const STATUS = "cheese-spanner:vod-multiview:status";
+    const AUDIO_REFERENCE = "cheese-spanner:vod-multiview:audio-reference";
     const REFERENCE = "cheese-spanner:vod-multiview:reference";
     const AUXILIARY = "cheese-spanner:vod-multiview:auxiliary";
     const MESSAGES = {
@@ -61,6 +62,7 @@
     };
     const RETRY = new Set(["lookup-error", "load-error", "preparing"]);
     let enabled = false;
+    let compressorOption = false;
     let hidden = false;
     let view = null;
     let observer = null;
@@ -203,6 +205,9 @@
 #bcvm-toolbar .bcvm-channel { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--bct-text); font-weight:600; }
 #bcvm-toolbar .bcvm-list .bcvm-title { grid-column:2; color:var(--bct-text-muted); font-size:12px; font-weight:400; line-height:1.5; }
 #bcvm-toolbar .bcvm-channel[hidden] + .bcvm-title { color:var(--bct-text); font:inherit; font-weight:600; }
+#bcvm-toolbar .bcvm-solo { margin:4px 0 0; }
+#bcvm-toolbar .bcvm-solo[aria-pressed="true"] { color:var(--bct-brand-text); }
+#bcvm-toolbar .bcvm-solo[aria-disabled="true"] { color:var(--bct-text-muted); }
 #bcvm-toolbar .bcvm-entry-actions { display:flex; align-items:center; gap:2px; }
 #bcvm-toolbar :is(.bcvm-remove,.bcvm-sync) { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; min-height:28px; margin:0; padding:0; border:0; background:transparent; color:var(--bct-text-body); }
 #bcvm-toolbar :is(.bcvm-remove,.bcvm-sync):hover { background:var(--bct-hover); color:var(--bct-text); }
@@ -221,7 +226,7 @@
 #bcvm-toolbar .bcvm-entry-status { position:absolute; width:1px; height:1px; padding:0; margin:-1px; border:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 #bcvm-toolbar .bcvm-entry:has(.bcvm-sync:is(:hover,:focus-visible)) .bcvm-entry-status { z-index:8; inset-inline-end:0; top:calc(100% - 4px); width:max-content; max-width:min(260px,calc(100vw - 64px)); height:auto; margin:0; padding:8px 10px; border:1px solid var(--bct-border); border-radius:var(--bct-radius-sm); background:var(--bct-surface); color:var(--bct-text); box-shadow:var(--bct-shadow); font-size:12px; line-height:1.5; white-space:normal; clip-path:none; pointer-events:none; }
 #bcvm-toolbar .bcvm-help, #bcvm-toolbar .bcvm-empty { margin:0; color:var(--bct-text-muted); font-size:12px; line-height:1.6; }
-#bcvm-toolbar .bcvm-empty { padding:16px 10px; border:1px dashed var(--bct-border-strong); border-radius:var(--bct-radius-md); text-align:center; }
+#bcvm-toolbar .bcvm-empty { padding:16px 10px; border:1px dashed var(--bct-border-strong); border-radius:var(--bct-radius-md); text-align:center; overflow-wrap:anywhere; }
 #bcvm-toolbar .bcvm-notice { padding:8px 10px; background:var(--bct-surface-weak); border-radius:var(--bct-radius-sm); color:var(--bct-text-muted); font-size:12px; line-height:1.5; }
 #bcvm-toolbar :is(.bcvm-notice, .bcvm-results, .bcvm-list):empty,
 #bcvm-toolbar .bcvm-list:has(.bcvm-entry) + .bcvm-empty { display:none; }
@@ -440,10 +445,266 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
         current.followingRefresh.disabled = false;
     }
 
+    // 같은 SDK 슬롯을 다른 영상이 재사용할 수 있어요. 실제 세션이 현재 소유한 미디어에서만 응답을 받아요.
+    function readAuxAudio(current, entry) {
+        const root = entry.screen.querySelector(":scope > .pzp-pc[data-bcmv-video]");
+        const video = root?.querySelector("video.webplayer-internal-video");
+        if (!video?.isConnected || root.dataset.bcvmVideoNo !== entry.no || !entry.request || !entry.info) return null;
+        let status = null;
+        const receive = (event) => {
+            if (event.detail?.request === entry.request && event.detail?.id === entry.info.media.id)
+                status = event.detail.status;
+        };
+        video.addEventListener(AUDIO_REFERENCE, receive);
+        try {
+            send(current.panel, { action: "read-audio", request: entry.request });
+        } finally {
+            video.removeEventListener(AUDIO_REFERENCE, receive);
+        }
+        return status ? { root, video, status } : null;
+    }
+
+    function soloPlayers(current) {
+        const main = current.root.querySelector("video.webplayer-internal-video");
+        return [
+            { row: current.mainEntry, video: main },
+            ...Array.from(current.entries.values(), (row) => {
+                const player = row.screen.querySelector(":scope > .pzp-pc[data-bcmv-video]");
+                const video =
+                    player?.dataset.bcvmVideoNo === row.no && row.syncAvailable
+                        ? player.querySelector("video.webplayer-internal-video")
+                        : null;
+                return { row, video };
+            }),
+        ];
+    }
+
+    function soloReason(players, selected) {
+        if (players.length < 2) return "보조 영상을 추가하세요.";
+        if (
+            document.hidden ||
+            players.some(
+                ({ video }) =>
+                    !video?.isConnected ||
+                    video.readyState < 2 ||
+                    video.seeking ||
+                    video.error ||
+                    video.ended ||
+                    video.paused
+            )
+        )
+            return "모든 영상이 재생된 뒤 사용할 수 있어요.";
+        const target = players.find(({ row }) => row.solo === selected)?.video;
+        if (!target || target.muted || !target.volume) return "이 영상의 음소거와 볼륨을 먼저 조절하세요.";
+        if (
+            players.some(
+                ({ video }) =>
+                    video !== target &&
+                    !video.muted &&
+                    video.volume > 0 &&
+                    !CheeseSpanner.mainAudioOutput?.available(video)
+            )
+        )
+            return "다른 영상의 음소거를 켜거나 해당 영상에서 컴프레서를 먼저 사용하세요.";
+        return "";
+    }
+
+    function syncSoloButtons(current) {
+        if (!current.mainEntry || (!current.open && !current.solo)) return;
+        const players = soloPlayers(current);
+        for (const { row } of players) {
+            const button = row.solo;
+            const active = current.solo?.button === button;
+            const reason = active ? "" : soloReason(players, button);
+            button.hidden = players.length < 2;
+            button.setAttribute("aria-pressed", String(active));
+            button.setAttribute("aria-disabled", String(!!reason));
+            const label = active ? "단독 듣기 취소" : "이 영상만 듣기";
+            if (button.textContent !== label) button.textContent = label;
+            button.title = reason || button.textContent;
+            button.setAttribute(
+                "aria-label",
+                [row.channel.textContent || row.title.textContent, button.textContent, reason]
+                    .filter(Boolean)
+                    .join(" · ")
+            );
+        }
+    }
+
+    function clearSolo(current) {
+        const solo = current.solo;
+        if (!solo) return;
+        current.solo = null;
+        solo.listeners.abort();
+        solo.monitor.disconnect();
+        for (const release of solo.releases) release();
+        syncSoloButtons(current);
+    }
+
+    function toggleSolo(current, button, event) {
+        if (!event.isTrusted || view !== current || route !== videoNoFromUrl(location.href) || !current.running) return;
+        if (current.solo?.button === button) return clearSolo(current);
+        const players = soloPlayers(current);
+        const reason = soloReason(players, button);
+        if (reason || [...current.entries.values()].some((entry) => !readAuxAudio(current, entry))) {
+            current.notice.textContent = reason || "연결된 영상을 확인한 뒤 다시 선택하세요.";
+            return;
+        }
+        clearSolo(current);
+        const cancel = () => clearSolo(current);
+        const listeners = new AbortController();
+        const monitor = new MutationObserver((records) => {
+            const next = soloPlayers(current);
+            if (
+                route !== videoNoFromUrl(location.href) ||
+                next.length !== players.length ||
+                next.some(({ video }, i) => !video?.isConnected || video !== players[i].video) ||
+                records.some(
+                    (record) => record.attributeName === "src" && players.some(({ video }) => video === record.target)
+                )
+            )
+                cancel();
+        });
+        const releases = [];
+        const solo = (current.solo = { button, listeners, monitor, releases });
+        monitor.observe(current.host, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ["src", "data-bcvm-video-no"],
+        });
+        for (const { row, video } of players) {
+            for (const name of ["volumechange", "play", "pause", "ended", "seeking", "emptied", "loadstart", "error"])
+                video.addEventListener(name, cancel, { signal: listeners.signal });
+            if (row.solo === button || video.muted || video.volume === 0) continue;
+            const release = CheeseSpanner.mainAudioOutput?.hold(video, cancel);
+            if (!release || current.solo !== solo) {
+                release?.();
+                cancel();
+                current.notice.textContent = "다른 영상의 오디오 연결을 확인한 뒤 다시 선택하세요.";
+                return;
+            }
+            releases.push(release);
+        }
+        current.notice.textContent = "";
+        syncSoloButtons(current);
+    }
+
+    function replayIdentity(info) {
+        if (!info?.media || !info.channelId) return null;
+        const { videoNo, id, startMs, endMs, rewind } = info.media;
+        return JSON.stringify([info.channelId, videoNo, id, startMs, endMs, Boolean(rewind)]);
+    }
+
+    function forgetRemovedAudio(current) {
+        const undo = current.audioUndo;
+        if (!undo) return;
+        current.audioUndo = null;
+        clearTimeout(undo.timer);
+        undo.listeners.abort();
+        if (document.activeElement === current.audioUndoButton) current.addToggle.focus({ preventScroll: true });
+        current.audioUndoButton.hidden = true;
+        current.audioUndoButton.textContent = "";
+    }
+
+    function rememberRemovedAudio(current, entry) {
+        forgetRemovedAudio(current);
+        const owned = readAuxAudio(current, entry);
+        const mainVideo = current.root.querySelector("video.webplayer-internal-video");
+        const mainIdentity = replayIdentity(current.mainInfo);
+        const subIdentity = replayIdentity(entry.info);
+        if (!owned || !mainVideo || !mainIdentity || !subIdentity) return;
+        const undo = {
+            no: entry.no,
+            mainIdentity,
+            subIdentity,
+            mainVideo,
+            muted: owned.video.muted,
+            volume: owned.video.volume,
+            expires: Date.now() + 5 * 60 * 1000,
+            listeners: new AbortController(),
+        };
+        current.audioUndo = undo;
+        const cancel = () => forgetRemovedAudio(current);
+        undo.timer = setTimeout(cancel, 5 * 60 * 1000);
+        for (const type of ["emptied", "loadstart"])
+            mainVideo.addEventListener(type, cancel, { signal: undo.listeners.signal });
+        const sound = undo.muted ? "음소거 유지" : "이전 음량과 같으면 소리 켜기";
+        current.audioUndoButton.textContent = `${entry.info.title || "다시보기 " + entry.no} · 이전 음소거 상태로 다시 추가 (${sound})`;
+        current.audioUndoButton.hidden = false;
+    }
+
+    function restoreRemovedAudio(current, event) {
+        const undo = current.audioUndo;
+        if (!event.isTrusted || !current.open || !current.addOpen || !undo || undo.entry || !canAdd(current)) return;
+        if (
+            Date.now() >= undo.expires ||
+            undo.mainVideo !== current.root.querySelector("video.webplayer-internal-video") ||
+            current.mainId !== videoNoFromUrl(location.href) ||
+            current.entries.has(undo.no)
+        ) {
+            forgetRemovedAudio(current);
+            return;
+        }
+        cancelLookup(current);
+        current.audioUndoButton.hidden = true;
+        const entry = selectSub(current, undo.no, undo);
+        undo.entry = entry;
+        // 긴 대기나 메인 시간 이동 뒤 자동 동기화가 뒤늦게 소리를 켜지 않게 해요.
+        undo.expires = Math.min(undo.expires, Date.now() + 15000);
+        clearTimeout(undo.timer);
+        undo.timer = setTimeout(() => forgetRemovedAudio(current), Math.max(0, undo.expires - Date.now()));
+        const cancel = () => forgetRemovedAudio(current);
+        undo.mainVideo.addEventListener("seeking", cancel, { signal: undo.listeners.signal });
+        for (const type of ["pointerdown", "keydown"])
+            entry.screen.addEventListener(
+                type,
+                (event) => {
+                    if (event.isTrusted) cancel();
+                },
+                { capture: true, signal: undo.listeners.signal }
+            );
+        setAddOpen(current, false);
+        void loadSub(current, entry, null);
+    }
+
+    function restoreWhenReady(current, entry, status) {
+        const undo = current.audioUndo;
+        if (undo?.entry !== entry) return;
+        if (Date.now() < undo.expires && ["loading", "syncing"].includes(status)) return;
+        forgetRemovedAudio(current);
+        if (undo.muted) return;
+        const owned = readAuxAudio(current, entry);
+        const fallback = "이전 음량이나 영상을 확인할 수 없어 음소거로 추가했습니다.";
+        if (
+            !["synced", "main-paused"].includes(status) ||
+            owned?.status !== status ||
+            !owned.video.muted ||
+            Date.now() >= undo.expires ||
+            undo.mainVideo !== current.root.querySelector("video.webplayer-internal-video") ||
+            undo.volume <= 0 ||
+            Math.abs(owned.video.volume - undo.volume) > 0.0001
+        ) {
+            current.notice.textContent = fallback;
+            return;
+        }
+        const controls = owned.root.querySelectorAll(
+            ".pzp-pc__volume-button:not([data-cheese-spanner-audio-compressor])"
+        );
+        if (controls.length === 1) controls[0].click();
+        if (owned.video.muted || Math.abs(owned.video.volume - undo.volume) > 0.0001) {
+            owned.video.muted = true;
+            current.notice.textContent = fallback;
+        }
+    }
+
     function removeSub(current, entry) {
+        clearSolo(current);
+        if (current.audioUndo?.entry === entry) forgetRemovedAudio(current);
         entry.pending?.abort();
         if (entry.request) send(current.panel, { action: "stop", request: entry.request });
         current.entries.delete(entry.no);
+        syncSoloButtons(current);
         if (!current.entries.size) current.restore?.abort();
         current.windows.delete(entry.no);
         entry.screen.remove();
@@ -453,6 +714,8 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
     }
 
     function clearAll(current) {
+        clearSolo(current);
+        forgetRemovedAudio(current);
         setRunning(current, false);
         cancelLookup(current);
         clearFollowing(current);
@@ -475,7 +738,7 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
         );
     }
 
-    function createListEntry(no, main = false) {
+    function createListEntry(current, no, main = false) {
         const row = element("li", main ? "bcvm-main-entry" : "bcvm-entry");
         const heading = element("div", "bcvm-row bcvm-entry-heading");
         const copy = element("div", "bcvm-entry-copy");
@@ -489,8 +752,11 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
         }
         copy.append(role, channel, title);
         heading.append(copy);
-        row.append(heading);
-        return { row, heading, role, channel, title };
+        const solo = button("이 영상만 듣기", (event) => toggleSolo(current, solo, event));
+        solo.className = "bcvm-solo";
+        solo.hidden = true;
+        row.append(heading, solo);
+        return { row, heading, role, channel, title, solo };
     }
 
     function setListInfo(entry, info) {
@@ -523,7 +789,14 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
         );
     }
 
-    function selectSub(current, subNo) {
+    function selectSub(current, subNo, undo = null) {
+        clearSolo(current);
+        if (
+            current.audioUndo &&
+            current.audioUndo !== undo &&
+            (current.audioUndo.no === subNo || current.audioUndo.entry)
+        )
+            forgetRemovedAudio(current);
         setRunning(current, true);
         const used = new Set([...current.entries.values()].map((entry) => entry.index));
         const index = Array.from({ length: maxAuxiliary }, (_, n) => n).find((n) => !used.has(n));
@@ -537,7 +810,7 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
         status.id = `${PANEL_ID}-status-${subNo}`;
         status.setAttribute("role", "status");
         const entry = {
-            ...createListEntry(subNo),
+            ...createListEntry(current, subNo),
             no: subNo,
             index,
             screen,
@@ -548,8 +821,10 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
             syncAvailable: false,
         };
         entry.tile = createTile(screen, subNo, `보조 다시보기 ${subNo}`, entry.title.href);
-        const removeEntry = () => {
+        const removeEntry = (event) => {
             if (view !== current || current.entries.get(subNo) !== entry) return;
+            if (event.isTrusted) rememberRemovedAudio(current, entry);
+            else forgetRemovedAudio(current);
             const remembered = rememberedReplays.get(current.mainId);
             remembered?.delete(subNo);
             if (remembered?.size === 0) rememberedReplays.delete(current.mainId);
@@ -571,6 +846,7 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
         entry.sync = button("", () => {
             if (view !== current || current.entries.get(subNo) !== entry) return;
             if (RETRY.has(entry.state)) {
+                if (current.audioUndo?.entry === entry) forgetRemovedAudio(current);
                 entry.pending?.abort();
                 if (entry.request) send(current.panel, { action: "stop", request: entry.request });
                 entry.request = 0;
@@ -597,6 +873,7 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
         entry.heading.append(actions);
         entry.row.append(status);
         current.entries.set(subNo, entry);
+        syncSoloButtons(current);
         current.results.replaceChildren();
         current.list.append(entry.row);
         current.panel.append(screen);
@@ -626,8 +903,17 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
             current.notice.textContent = "이미 화면에 있는 다시보기입니다.";
             return;
         }
+        const undo = current.audioUndo;
+        if (
+            undo?.entry === entry &&
+            (undo.mainIdentity !== replayIdentity(main) || undo.subIdentity !== replayIdentity(sub))
+        ) {
+            forgetRemovedAudio(current);
+            current.notice.textContent = "영상 정보가 달라 음소거로 추가했습니다.";
+        }
         entry.info = {
             media: sub.media,
+            channelId: sub.channelId,
             title: sub.title,
             channelName: sub.channelName,
             channelImageUrl: sub.channelImageUrl,
@@ -1267,12 +1553,11 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
             if (toolbar.parentElement !== sidebar) sidebar.append(toolbar);
         } else {
             toolbar.dataset.placement = "below";
-            const width = Math.min(360, video.width - 16, window.innerWidth - 16);
+            const rowLeft = row.getBoundingClientRect().left;
+            const right = Math.min(video.right, window.innerWidth);
+            const width = Math.min(360, right - Math.max(0, rowLeft, video.left) - 16);
             if (width > 0) {
-                const left = Math.max(
-                    8,
-                    Math.min(video.right, window.innerWidth) - row.getBoundingClientRect().left - width - 8
-                );
+                const left = right - rowLeft - width - 8;
                 toolbar.style.setProperty("--bcvm-toolbar-left", `${left}px`);
                 toolbar.style.setProperty("--bcvm-toolbar-width", `${width}px`);
             } else {
@@ -1324,6 +1609,7 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
         if (open && layoutSuspended(current)) return;
         if (trigger) current.toolbarTrigger = trigger;
         current.open = open;
+        syncSoloButtons(current);
         current.panel.dataset.open = open ? "1" : "0";
         current.toolbar.hidden = !open;
         current.chatButton?.setAttribute("aria-expanded", String(open));
@@ -2122,11 +2408,40 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
         followingPane.append(followingFilter, current.followingStatus, current.followingList);
         current.list = element("ul", "bcvm-list");
         current.list.setAttribute("aria-label", "다시보기 배치 목록");
-        current.mainEntry = createListEntry(current.mainId, true);
+        current.mainEntry = createListEntry(current, current.mainId, true);
+        const refreshSolo = () => syncSoloButtons(current);
+        for (const name of ["volumechange", "playing", "pause", "canplay", "ended", "emptied"])
+            host.addEventListener(name, refreshSolo, { capture: true, signal });
+        CheeseSpanner.mainAudioOutput?.changes?.addEventListener(
+            "change",
+            () => {
+                clearSolo(current);
+                refreshSolo();
+            },
+            { signal }
+        );
+        document.addEventListener(
+            "visibilitychange",
+            () => {
+                if (document.hidden) clearSolo(current);
+                refreshSolo();
+            },
+            { signal }
+        );
         current.list.append(current.mainEntry.row);
         searchPane.append(form, current.results);
-        searchSection.append(addTabs, searchPane, followingPane);
-        listSection.append(current.list, element("p", "bcvm-empty", "아직 추가한 보조 영상이 없어요."));
+        current.audioUndoButton = button("", (event) => restoreRemovedAudio(current, event));
+        current.audioUndoButton.className = "bcvm-restore-audio";
+        current.audioUndoButton.hidden = true;
+        searchSection.append(addTabs, current.audioUndoButton, searchPane, followingPane);
+        listSection.append(
+            current.list,
+            element(
+                "p",
+                "bcvm-empty",
+                "‘추가’를 눌러 채널 이름을 검색하거나 다시보기 주소를 붙여 넣으세요. (예시 https://chzzk.naver.com/video/123456)"
+            )
+        );
         toolbar.append(heading, current.notice, searchSection, createTimeline(current), listSection, layoutSection);
         panel.addEventListener(STATUS, (event) => {
             if (view !== current || !Object.hasOwn(MESSAGES, event.detail?.status)) return;
@@ -2137,6 +2452,9 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
                 if (typeof event.detail.syncEnabled === "boolean") entry.syncEnabled = event.detail.syncEnabled;
                 entry.syncAvailable = event.detail.canToggle === true;
                 updateStatus(entry, event.detail.status);
+                restoreWhenReady(current, entry, event.detail.status);
+                if (current.solo && !entry.syncAvailable) clearSolo(current);
+                syncSoloButtons(current);
             }
         });
         host.addEventListener(
@@ -2376,6 +2694,8 @@ ${layoutView.bottomGripCss(`#${PANEL_ID} .bcvm-divider[data-bcvm-divider="bottom
     document.addEventListener(AUXILIARY, syncClocks);
 
     bindFeatureOptions((options) => {
+        if (view && compressorOption !== options.audioCompressorEnabled) clearSolo(view);
+        compressorOption = options.audioCompressorEnabled;
         enabled = options.vodMultiviewEnabled === true;
         clockEnabled = enabled && options.vodBroadcastClockEnabled !== false;
         if (enabled && !unsubscribe) unsubscribe = startPageChangeDetection(reconcile);

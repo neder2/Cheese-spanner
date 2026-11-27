@@ -13,6 +13,8 @@
 
     const FILE_KIND = "cheese-spanner.settings-backup";
     const FORMAT_VERSION = 1;
+    const EXCLUSION_FORMAT_VERSION = 2;
+    const exclusions = () => globalThis.CheeseSpanner?.categoryExclusions;
     const MAX_FILE_BYTES = 1024 * 1024;
     const STORE_MESSAGE_TYPE = "cheese-spanner:settings-store";
     const BACKUP_MESSAGE_TYPE = "cheese-spanner:settings-backup";
@@ -240,6 +242,7 @@
             return "options";
         }
         if (Object.values(PANEL_KEYS).includes(key)) return "panelSizes";
+        if (key === exclusions()?.STORAGE_KEY) return "categoryExclusions";
         if (key === LIVE_START_CHANNELS_KEY) return "liveStartChannels";
         if (key === CHAT_MULTIVIEW_KEY) return "chatMultiview";
         return "multiview";
@@ -266,7 +269,13 @@
     }
 
     /** Builds a file from raw sync/local snapshots. Invalid stored sections are left out and reported. */
-    function createBackup({ syncData = {}, localData = {}, extensionVersion = "", now = Date.now() } = {}) {
+    function createBackup({
+        syncData = {},
+        localData = {},
+        extensionVersion = "",
+        now = Date.now(),
+        includeExclusions = false,
+    } = {}) {
         const schema = settings();
         const omitted = [];
         const sync = { options: schema.normalizeOptions(syncData) };
@@ -323,10 +332,19 @@
             if (config) local.chatMultiview = config;
             else omitted.push("chatMultiview");
         }
+        if (includeExclusions) {
+            const model = exclusions();
+            const state = Object.hasOwn(localData, model.STORAGE_KEY)
+                ? model.normalizeState(localData[model.STORAGE_KEY])
+                : model.createEmptyState();
+            const entries = state && model.normalizeFileEntries(state.categories);
+            if (entries) local.categoryExclusions = entries;
+            else omitted.push("categoryExclusions");
+        }
         return {
             backup: {
                 kind: FILE_KIND,
-                formatVersion: FORMAT_VERSION,
+                formatVersion: local.categoryExclusions ? EXCLUSION_FORMAT_VERSION : FORMAT_VERSION,
                 extensionVersion: String(extensionVersion || "").slice(0, 32),
                 createdAt: Math.max(1, Math.floor(now)),
                 sync,
@@ -361,7 +379,11 @@
             if (typeof text !== "string" || byteLength(text) > MAX_FILE_BYTES) return fail("too-large");
         }
         if (!isPlainObject(value) || value.kind !== FILE_KIND) return fail("invalid-kind");
-        if (value.formatVersion !== FORMAT_VERSION) return fail("unsupported-version");
+        const hasList =
+            value.formatVersion === EXCLUSION_FORMAT_VERSION &&
+            isPlainObject(value.local) &&
+            Object.hasOwn(value.local, "categoryExclusions");
+        if (!hasList && value.formatVersion !== FORMAT_VERSION) return fail("unsupported-version");
         if (!hasOnly(value, ["kind", "formatVersion", "extensionVersion", "createdAt", "sync", "local"]))
             return fail("invalid-file");
         if (
@@ -372,17 +394,22 @@
             !isPlainObject(value.sync) ||
             !isPlainObject(value.local) ||
             !hasOnly(value.sync, SYNC_SECTIONS) ||
-            !hasOnly(value.local, LOCAL_SECTIONS)
+            !hasOnly(value.local, hasList ? [...LOCAL_SECTIONS, "categoryExclusions"] : LOCAL_SECTIONS)
         )
             return fail("invalid-file");
         const backup = {
             kind: FILE_KIND,
-            formatVersion: FORMAT_VERSION,
+            formatVersion: value.formatVersion,
             extensionVersion: value.extensionVersion,
             createdAt: value.createdAt,
             sync: {},
             local: {},
         };
+        if (hasList) {
+            const entries = exclusions()?.normalizeFileEntries(value.local.categoryExclusions);
+            if (!entries) return fail("invalid-exclusions");
+            backup.local.categoryExclusions = entries;
+        }
         const ignoredOptionKeys = [];
         const schema = settings();
         if (Object.hasOwn(value.sync, "options")) {
@@ -453,6 +480,7 @@
         if (backup.sync.options) sync.push(...settings().OPTION_KEYS);
         if (backup.sync.pinnedChannelIds) sync.push(PINS_KEY);
         if (backup.sync.followingFolders) sync.push(FOLDERS_KEY);
+        if (backup.local.categoryExclusions) local.push(exclusions().STORAGE_KEY);
         if (backup.local.panelSizes) {
             for (const name of Object.keys(backup.local.panelSizes)) local.push(PANEL_KEYS[name]);
         }
@@ -626,6 +654,37 @@
                 "chatMultiview",
                 backup.local.chatMultiview.channels?.length || 0
             );
+        if (backup.local.categoryExclusions) {
+            const model = exclusions();
+            const key = model.STORAGE_KEY;
+            const state = Object.hasOwn(localData, key)
+                ? model.normalizeState(localData[key])
+                : model.createEmptyState();
+            if (!state) return fail("invalid-stored-exclusions");
+            const existing = new Set(state.categories.map((entry) => model.categoryKey(entry)));
+            const additions = backup.local.categoryExclusions.filter(
+                (entry) => !existing.has(model.categoryKey(entry))
+            );
+            if (state.categories.length + additions.length > model.MAX_CATEGORIES) return fail("exclusions-limit");
+            if (additions.length) {
+                // Open broadcast lists ignore older revisions, including during rollback.
+                const writesAfterLocal =
+                    Object.keys(stages["live-start"]).length || Object.keys(stages["effects-on"]).length;
+                const requiredRevisions = writesAfterLocal ? 2 : 1;
+                if (state.revision > Number.MAX_SAFE_INTEGER - requiredRevisions)
+                    return fail("invalid-stored-exclusions");
+                stages.local[key] = {
+                    ...state,
+                    revision: state.revision + 1,
+                    categories: [...state.categories, ...additions],
+                };
+            }
+            summary.categoryExclusions = {
+                current: state.categories.length,
+                added: additions.length,
+                duplicates: backup.local.categoryExclusions.length - additions.length,
+            };
+        }
         const order = [
             ["effects-off", "sync"],
             ["sync", "sync"],
